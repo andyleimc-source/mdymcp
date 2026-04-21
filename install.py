@@ -349,23 +349,42 @@ def step_mcp_config(py: Path, creds: dict[str, str]) -> None:
     claude_bin = shutil.which("claude")
     codex_bin_or_cfg = shutil.which("codex") or (CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists())
 
-    # 自动检测客户端（--client 覆盖）
+    # 自动检测仅用于推荐默认值；--client 直接覆盖；否则交互让用户选
+    detected = set()
+    if claude_bin:
+        detected.add("claude")
+    if codex_bin_or_cfg:
+        detected.add("codex")
+
     if CLIENT_OVERRIDE is not None:
         targets = CLIENT_OVERRIDE
         info(f"--client 指定客户端：{', '.join(sorted(targets)) or '(空)'}")
     else:
-        targets = set()
-        if claude_bin:
-            targets.add("claude")
-        if codex_bin_or_cfg:
-            targets.add("codex")
-        if targets:
-            info(f"自动检测到客户端：{', '.join(sorted(targets))}")
-
-    if not targets:
-        warn("未检测到 claude / codex 客户端，跳过自动注册")
-        print_manual_hints(py, env_block)
-        return
+        if detected:
+            print(f"\n  自动检测到已安装客户端：{', '.join(sorted(detected))}")
+        else:
+            print("\n  未检测到 claude / codex（依然可以选，配置写入后下次装上即可生效）")
+        # 默认值：检测到两个 → 都装；检测到一个 → 那个；都没检测到 → claude
+        if detected == {"claude", "codex"}:
+            default_choice = "3"
+        elif "codex" in detected and "claude" not in detected:
+            default_choice = "2"
+        else:
+            default_choice = "1"
+        print("  • Claude Code：写到 ~/.claude.json（claude mcp add）")
+        print("  • Codex CLI：写到 ~/.codex/config.toml")
+        client_choice = ask_choice(
+            "选择 MCP 客户端",
+            [
+                ("1", "Claude Code"),
+                ("2", "Codex"),
+                ("3", "两个都装"),
+            ],
+            default=default_choice,
+        )
+        targets = {"claude", "codex"} if client_choice == "3" \
+                  else {"claude"} if client_choice == "1" \
+                  else {"codex"}
 
     # 注册范围：用户级（全局）/ 项目级（当前仓库）/ 都配
     if WRITE_PROJECT_MCP:
