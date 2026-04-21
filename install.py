@@ -96,8 +96,27 @@ def run(cmd: list[str], check: bool = True, **kw) -> subprocess.CompletedProcess
     return subprocess.run(cmd, check=check, **kw)
 
 
+def _try_git_pull() -> None:
+    """仓库已是 git clone 时主动 pull，避免复用老代码跑旧逻辑。"""
+    if not (ROOT / ".git").exists():
+        return
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), "pull", "--ff-only"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode == 0:
+            msg = r.stdout.strip() or "已是最新"
+            info(f"git pull：{msg.splitlines()[-1]}")
+        else:
+            warn(f"git pull 失败，将继续使用当前代码：{r.stderr.strip()[:160]}")
+    except Exception as e:
+        warn(f"git pull 异常：{e}")
+
+
 def step_venv() -> Path:
     info("步骤 1/5：准备 Python 虚拟环境")
+    _try_git_pull()
     py = VENV / "bin" / "python3"
     if not py.exists():
         py_sys = Path(sys.executable)
@@ -106,8 +125,10 @@ def step_venv() -> Path:
     else:
         info(f"已存在 {VENV}，跳过创建")
 
-    info("安装/更新 mdmcp 包（非 editable，兼容 Python 3.14+）")
+    info("安装/更新 mdmcp 包（--upgrade 强制拉最新本地代码）")
     run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
+    run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "--force-reinstall",
+         "--no-deps", "."], cwd=str(ROOT))
     run([str(py), "-m", "pip", "install", "--quiet", "."], cwd=str(ROOT))
     ok("虚拟环境就绪")
     return py

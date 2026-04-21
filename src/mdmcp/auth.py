@@ -4,11 +4,28 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import time
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+
+def _ssl_ctx() -> ssl.SSLContext:
+    """返回一个带 certifi CA 的 SSL 上下文。
+
+    macOS 上 python.org 安装的 Python 往往不带根证书，导致 urlopen 直接
+    CERTIFICATE_VERIFY_FAILED。优先用 certifi 的 CA bundle；装不上就回落到系统默认。
+    """
+    try:
+        import certifi  # type: ignore
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+_SSL_CTX = _ssl_ctx()
 
 BASE_API_URL = "https://api.mingdao.com"
 HOOK_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5"
@@ -71,7 +88,7 @@ def ensure_access_token() -> str:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
     token = data.get("token")
@@ -95,7 +112,7 @@ def _hap_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -149,7 +166,6 @@ def hap_register(account_id: str, refresh_token: str, hap_token: str) -> str:
 # OAuth 自助注册流程（mdmcp-auth 命令）
 # ─────────────────────────────────────────────
 
-import os
 import secrets
 import shutil
 import subprocess
@@ -425,7 +441,7 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
     account_id = data.get("account_id") or ""
