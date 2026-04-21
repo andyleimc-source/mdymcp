@@ -12,7 +12,6 @@ from typing import Any
 
 BASE_API_URL = "https://api.mingdao.com"
 HOOK_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5"
-APPNAME_DEFAULT = "mdcloud"  # 服务端映射表按 appname 路由，沿用既有映射避免重新授权
 
 # OAuth 自助注册（mdmcp-auth 命令使用）
 APP_KEY_DEFAULT = "6A228C49DAC4"
@@ -55,16 +54,13 @@ def ensure_access_token() -> str:
     _load_env()
     account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
     key = os.getenv("MD_KEY", "").strip()
-    appname = os.getenv("MD_APPNAME", APPNAME_DEFAULT).strip()
     hook_url = os.getenv("MD_HOOK_URL", HOOK_URL_DEFAULT).strip()
     if not account_id or not key:
         raise RuntimeError(
             "Missing MD_ACCOUNT_ID or MD_KEY. Set them in .env or environment."
         )
 
-    body = json.dumps(
-        {"account_id": account_id, "key": key, "appname": appname}
-    ).encode("utf-8")
+    body = json.dumps({"account_id": account_id, "key": key}).encode("utf-8")
     req = urllib.request.Request(
         hook_url,
         data=body,

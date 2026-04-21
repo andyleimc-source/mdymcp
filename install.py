@@ -186,7 +186,7 @@ def step_ping(py: Path, creds: dict[str, str]) -> None:
     # ── v1 token 接口 ──
     print("\n[v1.1] 调用 v1 token hook")
     print("  POST https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5")
-    print(f"  body: {{\"account_id\":\"{creds['MD_ACCOUNT_ID']}\",\"key\":\"***{creds['MD_KEY'][-6:]}\",\"appname\":\"mdcloud\"}}")
+    print(f"  body: {{\"account_id\":\"{creds['MD_ACCOUNT_ID']}\",\"key\":\"***{creds['MD_KEY'][-6:]}\"}}")
     if not ask_yes("继续打这个请求吗？", default=True):
         err("用户中止")
         sys.exit(1)
