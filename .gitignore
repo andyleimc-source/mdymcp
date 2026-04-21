@@ -3,6 +3,8 @@
 *.secret
 *.key
 .mcp.json
+.pypi-token
+.pypirc
 
 # Python
 __pycache__/
