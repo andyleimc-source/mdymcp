@@ -25,10 +25,24 @@ ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 ENV_FILE = ROOT / ".env"
 MCP_JSON = ROOT / ".mcp.json"
+CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 
 # 调试模式：MDMCP_INSTALL_DEBUG=1 或 --debug 启用，逐步显示每个网络请求并 y/n 确认
 DEBUG = os.getenv("MDMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
         or "--debug" in sys.argv
+
+# --client=claude|codex|both 覆盖自动检测；--project 额外写一份 .mcp.json 到当前仓库
+def _parse_client_flag() -> set[str] | None:
+    for a in sys.argv[1:]:
+        if a.startswith("--client="):
+            v = a.split("=", 1)[1].lower().strip()
+            if v in ("both", "all"):
+                return {"claude", "codex"}
+            return {x for x in v.split(",") if x in ("claude", "codex")}
+    return None
+
+CLIENT_OVERRIDE = _parse_client_flag()
+WRITE_PROJECT_MCP = "--project" in sys.argv
 
 
 def info(msg: str) -> None:
@@ -261,96 +275,128 @@ def step_ping(py: Path, creds: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def step_mcp_config(py: Path, creds: dict[str, str]) -> None:
-    info("步骤 4/5：配置 Claude Code MCP Server")
-    print("\nmdmcp 需要注册到 Claude Code 才能被识别和调用。有两种注册范围：")
-    print("  • 用户级：在任何目录打开 Claude Code 都能用 mdmcp（推荐，装一次全局生效）")
-    print("  • 项目级：只在「当前目录」打开 Claude Code 时才能用（想把配置随仓库分发时用）")
-    print("  • 两个都配：全局可用，同时把配置也提交到当前仓库")
-    print("  • 跳过：你自己手动搞，脚本会打印手动命令给你")
-    mode = ask_choice(
-        "选择注册范围",
-        [
-            ("1", "项目级 —— 只在当前目录（在此目录写 .mcp.json）"),
-            ("2", "用户级 —— 全局所有目录可用（调用 claude mcp add，推荐）"),
-            ("3", "两个都配 —— 全局 + 当前目录"),
-            ("4", "跳过 —— 我自己手动配"),
-        ],
-        default="2",
-    )
-
-    env_block = {
-        "MD_ACCOUNT_ID": creds["MD_ACCOUNT_ID"],
-        "MD_KEY": creds["MD_KEY"],
-    }
-    # 运行时只需 MD_HAP_KEY；refresh_token / hap_token 仅 install 时 register 用
+def _build_env_block(creds: dict[str, str]) -> dict[str, str]:
+    env_block = {"MD_ACCOUNT_ID": creds["MD_ACCOUNT_ID"], "MD_KEY": creds["MD_KEY"]}
     if creds.get("MD_HAP_KEY"):
         env_block["MD_HAP_KEY"] = creds["MD_HAP_KEY"]
-    server_entry = {
-        "type": "stdio",
-        "command": str(py),
-        "args": ["-m", "mdmcp.server"],
-        "env": env_block,
-    }
-
-    if mode in ("1", "3"):
-        existing: dict = {}
-        if MCP_JSON.exists():
-            try:
-                existing = json.loads(MCP_JSON.read_text(encoding="utf-8"))
-            except Exception:
-                warn(f"{MCP_JSON} 无法解析，将覆盖")
-        existing.setdefault("mcpServers", {})["mdmcp"] = server_entry
-        MCP_JSON.write_text(
-            json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
-        ok(f"已写入 {MCP_JSON}")
-
-    if mode in ("2", "3"):
-        claude_bin = shutil.which("claude")
-        if not claude_bin:
-            warn("未检测到 `claude` CLI，跳过用户级配置。手动命令见下方。")
-            print_user_level_hint(py, creds)
-        else:
-            info("调用 claude mcp add 注册到用户级…")
-            # 先尝试移除已存在的同名条目，避免冲突
-            run(
-                [claude_bin, "mcp", "remove", "mdmcp", "--scope", "user"],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            cmd = [
-                claude_bin, "mcp", "add", "mdmcp",
-                "--scope", "user",
-                "-e", f"MD_ACCOUNT_ID={creds['MD_ACCOUNT_ID']}",
-                "-e", f"MD_KEY={creds['MD_KEY']}",
-            ]
-            if creds.get("MD_HAP_KEY"):
-                cmd += ["-e", f"MD_HAP_KEY={creds['MD_HAP_KEY']}"]
-            cmd += ["--", str(py), "-m", "mdmcp.server"]
-            try:
-                run(cmd)
-                ok("已注册到用户级 Claude Code")
-            except subprocess.CalledProcessError as e:
-                err(f"claude mcp add 失败：{e}")
-                print_user_level_hint(py, creds)
-
-    if mode == "4":
-        info("已跳过。参考下面的手动配置：")
-        print_user_level_hint(py, creds)
+    return env_block
 
 
-def print_user_level_hint(py: Path, creds: dict[str, str]) -> None:
-    print("\n—— 手动配置 Claude Code（用户级）——")
-    hap_env = f" -e MD_HAP_KEY={creds['MD_HAP_KEY']}" if creds.get("MD_HAP_KEY") else ""
-    print(
-        f"claude mcp add mdmcp --scope user "
-        f"-e MD_ACCOUNT_ID={creds['MD_ACCOUNT_ID']} "
-        f"-e MD_KEY={creds['MD_KEY']}{hap_env} "
-        f"-- {py} -m mdmcp.server"
+def _register_claude_user(claude_bin: str, py: Path, env_block: dict[str, str]) -> bool:
+    run([claude_bin, "mcp", "remove", "mdmcp", "--scope", "user"],
+        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = [claude_bin, "mcp", "add", "mdmcp", "--scope", "user"]
+    for k, v in env_block.items():
+        cmd += ["-e", f"{k}={v}"]
+    cmd += ["--", str(py), "-m", "mdmcp.server"]
+    try:
+        run(cmd, stdout=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError as e:
+        err(f"claude mcp add 失败：{e}")
+        return False
+
+
+def _write_project_mcp_json(py: Path, env_block: dict[str, str]) -> None:
+    server_entry = {"type": "stdio", "command": str(py),
+                    "args": ["-m", "mdmcp.server"], "env": env_block}
+    existing: dict = {}
+    if MCP_JSON.exists():
+        try:
+            existing = json.loads(MCP_JSON.read_text(encoding="utf-8"))
+        except Exception:
+            warn(f"{MCP_JSON} 无法解析，将覆盖")
+    existing.setdefault("mcpServers", {})["mdmcp"] = server_entry
+    MCP_JSON.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
     )
+
+
+def _register_codex(py: Path, env_block: dict[str, str]) -> bool:
+    """在 ~/.codex/config.toml 里增/改 [mcp_servers.mdmcp] 段。"""
+    CODEX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    text = CODEX_CONFIG.read_text(encoding="utf-8") if CODEX_CONFIG.exists() else ""
+
+    # 删除任何已有的 [mcp_servers.mdmcp...] 段（含子表）
+    out_lines: list[str] = []
+    skip = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            skip = s.startswith("[mcp_servers.mdmcp]") \
+                   or s.startswith("[mcp_servers.mdmcp.")
+        if not skip:
+            out_lines.append(line)
+
+    env_inline = ", ".join(f'{k} = "{v}"' for k, v in env_block.items())
+    block = [
+        "[mcp_servers.mdmcp]",
+        f'command = "{py}"',
+        'args = ["-m", "mdmcp.server"]',
+        f"env = {{ {env_inline} }}",
+    ]
+    body = "\n".join(out_lines).rstrip()
+    new_text = (body + "\n\n" if body else "") + "\n".join(block) + "\n"
+    CODEX_CONFIG.write_text(new_text, encoding="utf-8")
+    return True
+
+
+def step_mcp_config(py: Path, creds: dict[str, str]) -> None:
+    info("步骤 4/5：自动注册到 MCP 客户端")
+    env_block = _build_env_block(creds)
+
+    claude_bin = shutil.which("claude")
+    codex_bin_or_cfg = shutil.which("codex") or (CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists())
+
+    # --client 覆盖自动检测
+    if CLIENT_OVERRIDE is not None:
+        targets = CLIENT_OVERRIDE
+        info(f"--client 指定：{', '.join(sorted(targets)) or '(空)'}")
+    else:
+        targets = set()
+        if claude_bin:
+            targets.add("claude")
+        if codex_bin_or_cfg:
+            targets.add("codex")
+
+    if not targets:
+        warn("未检测到 claude / codex 客户端，跳过自动注册")
+        print_manual_hints(py, env_block)
+        return
+
+    registered: list[str] = []
+    if "claude" in targets:
+        if not claude_bin:
+            warn("目标含 claude 但未检测到 `claude` CLI，跳过")
+        elif _register_claude_user(claude_bin, py, env_block):
+            registered.append("Claude Code（用户级）")
+    if "codex" in targets:
+        if _register_codex(py, env_block):
+            registered.append(f"Codex（{CODEX_CONFIG}）")
+
+    if WRITE_PROJECT_MCP:
+        _write_project_mcp_json(py, env_block)
+        registered.append(f"项目级 {MCP_JSON.name}")
+
+    if registered:
+        ok("已注册到：" + " + ".join(registered))
+    else:
+        warn("没有成功注册的客户端，下面是手动命令：")
+        print_manual_hints(py, env_block)
+
+
+def print_manual_hints(py: Path, env_block: dict[str, str]) -> None:
+    env_args = " ".join(f"-e {k}={v}" for k, v in env_block.items())
+    print("\n—— Claude Code（用户级）——")
+    print(f"claude mcp add mdmcp --scope user {env_args} -- {py} -m mdmcp.server")
+
+    env_inline = ", ".join(f'{k} = "{v}"' for k, v in env_block.items())
+    print("\n—— Codex CLI（写到 ~/.codex/config.toml）——")
+    print("[mcp_servers.mdmcp]")
+    print(f'command = "{py}"')
+    print('args = ["-m", "mdmcp.server"]')
+    print(f"env = {{ {env_inline} }}")
     print()
 
 

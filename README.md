@@ -21,8 +21,10 @@ python3 install.py
 1. 建 `.venv` 并装依赖
 2. 浏览器 OAuth 拿 v1 凭据 → 写入 `.env`
 3. **提示你粘贴 HAP 凭据**（refresh_token + access token，下面教你怎么拿）→ 自动 register 拿 `hap_key` → 写入 `.env`
-4. 注册到 Claude Code（默认用户级，全局生效）
+4. **自动检测**你装的 MCP 客户端，注册到 **Claude Code** 和/或 **Codex CLI**（用户级，全局生效）
 5. 验证 token 可拉
+
+> **多客户端支持**：脚本会扫 `claude` 和 `codex` 两个 CLI，**装哪个就自动注册到哪个**，都装就都配。要手动指定：`python3 install.py --client=claude` / `--client=codex` / `--client=both`。要额外写一份 `.mcp.json` 到当前仓库（项目级 Claude）：加 `--project`。
 
 装完重启 Claude Code，直接对话即可：
 
