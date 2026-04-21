@@ -39,12 +39,14 @@ python3 install.py
 1. 建 `.venv` 并装依赖
 2. 浏览器 OAuth 拿 v1 凭据 → 写入 `.env`
 3. **提示你粘贴 HAP 凭据**（refresh_token + access token，下面教你怎么拿）→ 自动 register 拿 `hap_key` → 写入 `.env`
-4. **自动检测**你装的 MCP 客户端，注册到 **Claude Code** 和/或 **Codex CLI**（用户级，全局生效）
+4. **自动检测**你装的 MCP 客户端，注册到 **Claude Code** / **Codex CLI** / **Antigravity**（用户级，全局生效）
 5. 验证 token 可拉
 
-> **多客户端支持**：脚本会扫 `claude` 和 `codex` 两个 CLI，**装哪个就自动注册到哪个**，都装就都配。手动指定客户端：`--client=claude` / `--client=codex` / `--client=both`。
+> **多客户端支持**：脚本会扫 `claude`、`codex` 和 `~/.gemini/antigravity/` 三处，**检测到哪个就自动注册到哪个**，多个就都配。手动指定客户端：`--client=claude` / `--client=codex` / `--client=antigravity` / `--client=all`（逗号可组合，例如 `--client=claude,antigravity`）。
 >
-> **注册范围**：步骤 4 会问"用户级 / 项目级 / 两个都配"（默认用户级，全局生效）。CI / 想跳过这个问题：加 `--project` 强制项目级 + 用户级。
+> **Antigravity 注意**：写完配置后需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdmcp；官方暂无自动 reload。
+>
+> **注册范围**：步骤 4 会问"用户级 / 项目级 / 两个都配"（默认用户级，全局生效）。项目级仅 Claude Code 支持（写 `.mcp.json`）。CI / 想跳过这个问题：加 `--project` 强制项目级 + 用户级。
 
 装完重启 Claude Code，直接对话即可：
 
@@ -186,6 +188,7 @@ MD_HAP_KEY=            # install.py 自动写入
 | `Missing MD_ACCOUNT_ID or MD_KEY` | .env 没配 | 重跑 `mdmcp-install`（或 clone 场景的 `python3 install.py`） |
 | `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | HAP 没注册 | 重跑 `mdmcp-install` 走 HAP 步骤 |
 | `SSL: CERTIFICATE_VERIFY_FAILED` | macOS 上 python.org 安装的 Python 没装根证书 | 一次性执行 `/Applications/Python\ 3.x/Install\ Certificates.command`（3.x 填你的版本号） |
+| Antigravity 里看不到 mdmcp | 配置文件已写但 IDE 未刷新 | 在 Antigravity「Manage MCP Servers」点 **Refresh**；如果 IDE 是从 macOS GUI 启动且找不到 `python` / `mdmcp` 命令，改为从终端启动 Antigravity（GUI 继承不到 shell 的 PATH） |
 | `HAP token 接口返回空` | hap_key 在服务端失效（refresh_token 过期等） | 按上面文档重新拿一对 token + refresh_token，重跑 install |
 | 启动显示 `HAP 网关工具 0 个` | `/mcp` 握手失败 | 网络问题；v1 工具不受影响 |
 | HAP 工具返回 `Http Headers verification failed` | HAP 后端对该工具有额外鉴权要求 | HAP 侧既有问题（Node 版也有），非 mdmcp bug |

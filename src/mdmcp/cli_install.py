@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
+ANTIGRAVITY_CONFIG = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+ALL_CLIENTS = {"claude", "codex", "antigravity"}
 DEBUG = os.getenv("MDMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
         or "--debug" in sys.argv
 
@@ -26,8 +28,8 @@ def _parse_client_flag() -> set[str] | None:
         if a.startswith("--client="):
             v = a.split("=", 1)[1].lower().strip()
             if v in ("both", "all"):
-                return {"claude", "codex"}
-            return {x for x in v.split(",") if x in ("claude", "codex")}
+                return set(ALL_CLIENTS)
+            return {x for x in v.split(",") if x in ALL_CLIENTS}
     return None
 
 
@@ -276,6 +278,28 @@ def _register_codex(py: Path, env_block: dict[str, str]) -> bool:
     return True
 
 
+def _register_antigravity(py: Path, env_block: dict[str, str]) -> bool:
+    """写 ~/.gemini/antigravity/mcp_config.json，合并已有 mcpServers。"""
+    ANTIGRAVITY_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    server_entry = {
+        "command": str(py),
+        "args": ["-m", "mdmcp.server"],
+        "env": env_block,
+    }
+    existing: dict = {}
+    if ANTIGRAVITY_CONFIG.exists():
+        try:
+            existing = json.loads(ANTIGRAVITY_CONFIG.read_text(encoding="utf-8"))
+        except Exception:
+            warn(f"{ANTIGRAVITY_CONFIG} 无法解析，将覆盖")
+    existing.setdefault("mcpServers", {})["mdmcp"] = server_entry
+    ANTIGRAVITY_CONFIG.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
 def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
                     client_override: set[str] | None, write_project: bool) -> None:
     info("步骤 3/4：注册到 MCP 客户端")
@@ -283,12 +307,15 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
 
     claude_bin = shutil.which("claude")
     codex_bin_or_cfg = shutil.which("codex") or (CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists())
+    antigravity_detected = ANTIGRAVITY_CONFIG.parent.exists()
 
-    detected = set()
+    detected: set[str] = set()
     if claude_bin:
         detected.add("claude")
     if codex_bin_or_cfg:
         detected.add("codex")
+    if antigravity_detected:
+        detected.add("antigravity")
 
     if client_override is not None:
         targets = client_override
@@ -297,30 +324,42 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
         if detected:
             print(f"\n  自动检测到已安装客户端：{', '.join(sorted(detected))}")
         else:
-            print("\n  未检测到 claude / codex（依然可以选，配置写入后下次装上即可生效）")
-        if detected == {"claude", "codex"}:
-            default_choice = "3"
-        elif "codex" in detected and "claude" not in detected:
+            print("\n  未检测到 claude / codex / antigravity（依然可以选，装上后配置即可生效）")
+        # 默认值：检测到 ≥2 个 → 全部检测到的（4）；只检测到 1 个 → 那一个；都没 → Claude
+        if len(detected) >= 2:
+            default_choice = "4"
+        elif detected == {"codex"}:
             default_choice = "2"
+        elif detected == {"antigravity"}:
+            default_choice = "3"
         else:
             default_choice = "1"
         print("  • Claude Code：写到 ~/.claude.json（claude mcp add）")
         print("  • Codex CLI：写到 ~/.codex/config.toml")
+        print("  • Antigravity：写到 ~/.gemini/antigravity/mcp_config.json")
         client_choice = ask_choice(
             "选择 MCP 客户端",
-            [("1", "Claude Code"), ("2", "Codex"), ("3", "两个都装")],
+            [("1", "Claude Code"),
+             ("2", "Codex"),
+             ("3", "Antigravity"),
+             ("4", "全部检测到的（或全部三个）")],
             default=default_choice,
         )
-        targets = {"claude", "codex"} if client_choice == "3" \
-                  else {"claude"} if client_choice == "1" \
-                  else {"codex"}
+        if client_choice == "1":
+            targets = {"claude"}
+        elif client_choice == "2":
+            targets = {"codex"}
+        elif client_choice == "3":
+            targets = {"antigravity"}
+        else:
+            targets = detected if detected else set(ALL_CLIENTS)
 
     if write_project:
         scope = "3"
     else:
         print()
         print("  • 用户级：在任何目录打开客户端都能用 mdmcp（推荐）")
-        print("  • 项目级：只在当前目录打开 Claude Code 才能用（写 .mcp.json，便于跟仓库分发；Codex 不支持项目级）")
+        print("  • 项目级：只在当前目录打开 Claude Code 才能用（写 .mcp.json，便于跟仓库分发；Codex / Antigravity 不支持项目级）")
         print("  • 两个都配：全局可用 + 配置随当前仓库分发")
         scope = ask_choice(
             "选择注册范围",
@@ -339,12 +378,16 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
             registered.append("Claude Code（用户级）")
         if "codex" in targets and _register_codex(py, env_block):
             registered.append(f"Codex（{CODEX_CONFIG}）")
+        if "antigravity" in targets and _register_antigravity(py, env_block):
+            registered.append(f"Antigravity（{ANTIGRAVITY_CONFIG}）")
     if do_project:
         _write_project_mcp_json(Path.cwd(), py, env_block)
         registered.append(f"项目级 .mcp.json（{Path.cwd()}）")
 
     if registered:
         ok("已注册到：" + " + ".join(registered))
+        if "antigravity" in targets:
+            info("Antigravity 需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdmcp")
     else:
         warn("没有成功注册的客户端，下面是手动命令：")
         env_args = " ".join(f"-e {k}={v}" for k, v in env_block.items())
