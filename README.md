@@ -8,7 +8,25 @@
 
 ## 一键安装
 
-> 要求：macOS / Linux，Python ≥ 3.10（推荐 Homebrew `python@3.12` 或更高），项目目录**不要放 iCloud 同步路径**（如 `~/Desktop`、`~/Documents`），建议放 `~/Downloads`、`~/code` 等本地目录。
+> 要求：macOS / Linux，Python ≥ 3.10（推荐 Homebrew `python@3.12` 或更高）。
+
+两种安装方式，任选其一。
+
+### 方式 A：PyPI（推荐，最轻）
+
+```bash
+# 没装 pipx：brew install pipx  或  python3 -m pip install --user pipx && pipx ensurepath
+pipx install mdymcp
+mdmcp-install
+```
+
+> PyPI 包名是 `mdymcp`（`mdmcp` 这个短名被占用），**安装后命令仍然是 `mdmcp` / `mdmcp-install` / `mdmcp-auth`**。`pipx` 会给 mdmcp 建独立隔离环境，不污染系统 Python。
+>
+> 配置写在 `~/.mdmcp/.env`，跨目录都能用。
+
+### 方式 B：Clone 仓库（开发者 / 想跟代码）
+
+> 项目目录**不要放 iCloud 同步路径**（如 `~/Desktop`、`~/Documents`），建议放 `~/Downloads`、`~/code` 等本地目录。
 
 ```bash
 git clone https://github.com/andyleimc-source/mdmcp.git
@@ -165,8 +183,9 @@ MD_HAP_KEY=            # install.py 自动写入
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| `Missing MD_ACCOUNT_ID or MD_KEY` | .env 没配 | 跑 `python3 install.py` 或手工填 `.env` |
-| `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | HAP 没注册 | 重跑 `python3 install.py` 走 HAP 步骤 |
+| `Missing MD_ACCOUNT_ID or MD_KEY` | .env 没配 | 重跑 `mdmcp-install`（或 clone 场景的 `python3 install.py`） |
+| `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | HAP 没注册 | 重跑 `mdmcp-install` 走 HAP 步骤 |
+| `SSL: CERTIFICATE_VERIFY_FAILED` | macOS 上 python.org 安装的 Python 没装根证书 | 一次性执行 `/Applications/Python\ 3.x/Install\ Certificates.command`（3.x 填你的版本号） |
 | `HAP token 接口返回空` | hap_key 在服务端失效（refresh_token 过期等） | 按上面文档重新拿一对 token + refresh_token，重跑 install |
 | 启动显示 `HAP 网关工具 0 个` | `/mcp` 握手失败 | 网络问题；v1 工具不受影响 |
 | HAP 工具返回 `Http Headers verification failed` | HAP 后端对该工具有额外鉴权要求 | HAP 侧既有问题（Node 版也有），非 mdmcp bug |
