@@ -164,32 +164,104 @@ def step_credentials(py: Path) -> dict[str, str]:
     return out
 
 
+def _show_and_pause(label: str, payload: dict, response: dict | str) -> None:
+    print(f"\n  {label}")
+    print(f"  ├─ 输入: {json.dumps(payload, ensure_ascii=False)}")
+    print(f"  └─ 输出: {response if isinstance(response, str) else json.dumps(response, ensure_ascii=False)}")
+
+
+def _stepwise_call(py: Path, env: dict, label: str, code: str) -> tuple[bool, str]:
+    """子进程跑一段 Python，返回 (是否成功, 输出 stripped)。"""
+    try:
+        r = subprocess.run([str(py), "-c", code], env=env, capture_output=True, text=True, check=True)
+        return True, r.stdout.strip() or r.stderr.strip()
+    except subprocess.CalledProcessError as e:
+        return False, (e.stdout or "") + (e.stderr or "")
+
+
 def step_ping(py: Path, creds: dict[str, str]) -> None:
-    info("步骤 3/5：验证凭据可用（调用一次 token 接口）")
+    info("步骤 3/5：验证凭据可用（每个调用都会先展示输入/输出，确认后继续）")
     env = {**os.environ, **creds}
+
+    # ── v1 token 接口 ──
+    print("\n[v1.1] 调用 v1 token hook")
+    print("  POST https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5")
+    print(f"  body: {{\"account_id\":\"{creds['MD_ACCOUNT_ID']}\",\"key\":\"***{creds['MD_KEY'][-6:]}\",\"appname\":\"mdcloud\"}}")
+    if not ask_yes("继续打这个请求吗？", default=True):
+        err("用户中止")
+        sys.exit(1)
     code = (
         "from mdmcp.auth import ensure_access_token;"
         "t=ensure_access_token();"
-        "print('token ok, len=', len(t))"
+        "print('TOKEN_LEN=', len(t))"
     )
-    try:
-        run([str(py), "-c", code], env=env)
-        ok("v1 凭据有效，服务端正常换出 access_token")
-    except subprocess.CalledProcessError:
-        err("凭据无法换出 token，请检查 MD_ACCOUNT_ID / MD_KEY 或联系运营方")
+    success, output = _stepwise_call(py, env, "v1 token", code)
+    print(f"  → {output}")
+    if not success:
+        err("v1 token 换取失败，请检查 MD_ACCOUNT_ID / MD_KEY")
         sys.exit(1)
+    ok("v1 凭据有效")
 
-    if creds.get("MD_HAP_REFRESH_TOKEN"):
-        hap_code = (
-            "from mdmcp.auth import ensure_hap_token;"
-            "t=ensure_hap_token();"
-            "print('hap token ok, len=', len(t))"
-        )
-        try:
-            run([str(py), "-c", hap_code], env=env)
-            ok("HAP refresh_token 有效，HAP 网关 token 已换出")
-        except subprocess.CalledProcessError:
-            warn("HAP refresh_token 验证失败，HAP 网关工具启动时会跳过；v1 工具不受影响")
+    if not creds.get("MD_HAP_REFRESH_TOKEN"):
+        warn("未填 MD_HAP_REFRESH_TOKEN，跳过 HAP 网关验证")
+        return
+
+    rt = creds["MD_HAP_REFRESH_TOKEN"]
+
+    # ── HAP register ──
+    print("\n[hap.1] 调用 HAP register hook（refresh_token → hap_key）")
+    print("  POST https://api.mingdao.com/workflow/hooks2/NjllNjNkYzNiODBlZTc3YjE3NDM1Y2U2")
+    print(f"  body: {{\"account_id\":\"{creds['MD_ACCOUNT_ID']}\",\"hap_refresh_token\":\"***{rt[-6:]}\"}}")
+    if not ask_yes("继续打这个请求吗？", default=True):
+        warn("用户跳过 HAP 验证")
+        return
+    code = (
+        "import os, json, urllib.request;"
+        "url='https://api.mingdao.com/workflow/hooks2/NjllNjNkYzNiODBlZTc3YjE3NDM1Y2U2';"
+        "body=json.dumps({'account_id':os.environ['MD_ACCOUNT_ID'],'hap_refresh_token':os.environ['MD_HAP_REFRESH_TOKEN']}).encode();"
+        "req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json'});"
+        "print(urllib.request.urlopen(req,timeout=30).read().decode())"
+    )
+    success, output = _stepwise_call(py, env, "HAP register", code)
+    print(f"  → 响应: {output}")
+    if not success:
+        warn("HAP register 调用失败，HAP 网关将跳过")
+        return
+    try:
+        hap_key = json.loads(output).get("hap_key", "")
+    except Exception:
+        hap_key = ""
+    if not hap_key:
+        warn("响应里没拿到 hap_key，HAP 网关将跳过")
+        return
+    ok(f"hap_key 拿到：{hap_key}")
+
+    # ── HAP token ──
+    print("\n[hap.2] 调用 HAP token hook（hap_key → HAP token）")
+    print("  POST https://api.mingdao.com/workflow/hooks2/NjllNjQ2NGE2NTAyMDc5NzgxMTFjM2Q3")
+    print(f"  body: {{\"account_id\":\"{creds['MD_ACCOUNT_ID']}\",\"hap_key\":\"{hap_key}\"}}")
+    if not ask_yes("继续打这个请求吗？", default=True):
+        warn("用户跳过 HAP token 验证")
+        return
+    env_with_hk = {**env, "_HAP_KEY": hap_key}
+    code = (
+        "import os, json, urllib.request;"
+        "url='https://api.mingdao.com/workflow/hooks2/NjllNjQ2NGE2NTAyMDc5NzgxMTFjM2Q3';"
+        "body=json.dumps({'account_id':os.environ['MD_ACCOUNT_ID'],'hap_key':os.environ['_HAP_KEY']}).encode();"
+        "req=urllib.request.Request(url,data=body,headers={'Content-Type':'application/json'});"
+        "print(urllib.request.urlopen(req,timeout=30).read().decode())"
+    )
+    success, output = _stepwise_call(py, env_with_hk, "HAP token", code)
+    print(f"  → 响应: {output}")
+    try:
+        hap_token = json.loads(output).get("token", "")
+    except Exception:
+        hap_token = ""
+    if hap_token:
+        ok(f"HAP token 换出成功（长度 {len(hap_token)}）")
+    else:
+        warn("HAP token 为空 —— 服务端工作流可能有 bug，refresh_token 也可能失效")
+        warn("v1 工具不受影响；HAP 工具会在 server 启动时跳过")
 
 
 def step_mcp_config(py: Path, creds: dict[str, str]) -> None:
