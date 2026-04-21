@@ -19,7 +19,12 @@ APP_KEY_DEFAULT = "6A228C49DAC4"
 CALLBACK_PORT_DEFAULT = 8080
 REGISTER_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks/NjllNjFkYjM2NTAyMDc5NzgxMGNmZDll"
 
+# HAP 网关凭据（独立于 v1 token）：refresh_token → register → hap_key → token
+HAP_REGISTER_HOOK_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjllNjNkYzNiODBlZTc3YjE3NDM1Y2U2"
+HAP_TOKEN_HOOK_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjllNjQ2NGE2NTAyMDc5NzgxMTFjM2Q3"
+
 _cache: dict[str, Any] = {"token": "", "expires_at": 0}
+_hap_cache: dict[str, Any] = {"hap_key": "", "token": "", "expires_at": 0}
 
 
 def _load_env() -> None:
@@ -80,6 +85,56 @@ def ensure_access_token() -> str:
     _cache["token"] = token
     _cache["expires_at"] = _next_local_midnight_ts()
     return str(token)
+
+
+def _hap_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "mdmcp/0.1",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def ensure_hap_token() -> str:
+    """HAP 网关 token：refresh_token → register(hap_key) → token，缓存到次日本地 00:00。"""
+    if _hap_cache["token"] and time.time() < _hap_cache["expires_at"] - 60:
+        return str(_hap_cache["token"])
+
+    _load_env()
+    account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
+    refresh_token = os.getenv("MD_HAP_REFRESH_TOKEN", "").strip()
+    register_url = os.getenv("MD_HAP_REGISTER_HOOK", HAP_REGISTER_HOOK_DEFAULT).strip()
+    token_url = os.getenv("MD_HAP_TOKEN_HOOK", HAP_TOKEN_HOOK_DEFAULT).strip()
+    if not account_id or not refresh_token:
+        raise RuntimeError(
+            "Missing MD_ACCOUNT_ID or MD_HAP_REFRESH_TOKEN. "
+            "在 .env 配置 HAP 个人授权拿到的 refresh_token。"
+        )
+
+    reg = _hap_post(register_url, {"account_id": account_id, "hap_refresh_token": refresh_token})
+    hap_key = reg.get("hap_key") or ""
+    if not hap_key:
+        raise RuntimeError(f"HAP register 未返回 hap_key：{reg!r}")
+
+    tok = _hap_post(token_url, {"account_id": account_id, "hap_key": hap_key})
+    token = tok.get("token") or ""
+    if not token:
+        raise RuntimeError(
+            f"HAP token 接口返回空，可能 refresh_token 失效。响应：{tok!r}"
+        )
+
+    _hap_cache["hap_key"] = hap_key
+    _hap_cache["token"] = token
+    _hap_cache["expires_at"] = _next_local_midnight_ts()
+    return token
 
 
 # ─────────────────────────────────────────────

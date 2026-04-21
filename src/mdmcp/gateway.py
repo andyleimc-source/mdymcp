@@ -2,7 +2,7 @@
 
 启动时对远端 `/mcp` 发 `initialize` + `tools/list` 拿到工具 schema；
 之后把 `call_tool` 直接透传到远端，支持 application/json 和 text/event-stream
-两种响应格式。Token 复用 `auth.ensure_access_token()`，401 会自动重拉一次重试。
+两种响应格式。Token 使用 `auth.ensure_hap_token()`（独立的 HAP 授权链），401 会自动重拉一次重试。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .auth import ensure_access_token
+from .auth import ensure_hap_token
 
 GATEWAY_URL = "https://api2.mingdao.com/mcp"
 PROTOCOL_VERSION = "2025-06-18"
@@ -77,14 +77,14 @@ class HapGateway:
             body["params"] = params
 
         try:
-            token = ensure_access_token()
+            token = ensure_hap_token()
             resp = self._post(token, body)
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 # token 可能失效，强制重新拉一次
                 from . import auth as _auth
-                _auth._cache["token"] = ""  # type: ignore[index]
-                token = ensure_access_token()
+                _auth._hap_cache["token"] = ""  # type: ignore[index]
+                token = ensure_hap_token()
                 resp = self._post(token, body)
             else:
                 raise GatewayError(f"HAP gateway HTTP {e.code}: {e.reason}") from e
@@ -124,7 +124,7 @@ class HapGateway:
         if self._looks_like_token_invalid(result):
             log.info("HAP 工具 %s 返回 token 失效，刷新后重试一次", name)
             from . import auth as _auth
-            _auth._cache["token"] = ""  # type: ignore[index]
+            _auth._hap_cache["token"] = ""  # type: ignore[index]
             result = self._rpc("tools/call", params)
         return result
 
