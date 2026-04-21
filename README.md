@@ -24,7 +24,9 @@ python3 install.py
 4. **自动检测**你装的 MCP 客户端，注册到 **Claude Code** 和/或 **Codex CLI**（用户级，全局生效）
 5. 验证 token 可拉
 
-> **多客户端支持**：脚本会扫 `claude` 和 `codex` 两个 CLI，**装哪个就自动注册到哪个**，都装就都配。要手动指定：`python3 install.py --client=claude` / `--client=codex` / `--client=both`。要额外写一份 `.mcp.json` 到当前仓库（项目级 Claude）：加 `--project`。
+> **多客户端支持**：脚本会扫 `claude` 和 `codex` 两个 CLI，**装哪个就自动注册到哪个**，都装就都配。手动指定客户端：`--client=claude` / `--client=codex` / `--client=both`。
+>
+> **注册范围**：步骤 4 会问"用户级 / 项目级 / 两个都配"（默认用户级，全局生效）。CI / 想跳过这个问题：加 `--project` 强制项目级 + 用户级。
 
 装完重启 Claude Code，直接对话即可：
 

@@ -343,39 +343,58 @@ def _register_codex(py: Path, env_block: dict[str, str]) -> bool:
 
 
 def step_mcp_config(py: Path, creds: dict[str, str]) -> None:
-    info("步骤 4/5：自动注册到 MCP 客户端")
+    info("步骤 4/5：注册到 MCP 客户端")
     env_block = _build_env_block(creds)
 
     claude_bin = shutil.which("claude")
     codex_bin_or_cfg = shutil.which("codex") or (CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists())
 
-    # --client 覆盖自动检测
+    # 自动检测客户端（--client 覆盖）
     if CLIENT_OVERRIDE is not None:
         targets = CLIENT_OVERRIDE
-        info(f"--client 指定：{', '.join(sorted(targets)) or '(空)'}")
+        info(f"--client 指定客户端：{', '.join(sorted(targets)) or '(空)'}")
     else:
         targets = set()
         if claude_bin:
             targets.add("claude")
         if codex_bin_or_cfg:
             targets.add("codex")
+        if targets:
+            info(f"自动检测到客户端：{', '.join(sorted(targets))}")
 
     if not targets:
         warn("未检测到 claude / codex 客户端，跳过自动注册")
         print_manual_hints(py, env_block)
         return
 
-    registered: list[str] = []
-    if "claude" in targets:
-        if not claude_bin:
-            warn("目标含 claude 但未检测到 `claude` CLI，跳过")
-        elif _register_claude_user(claude_bin, py, env_block):
-            registered.append("Claude Code（用户级）")
-    if "codex" in targets:
-        if _register_codex(py, env_block):
-            registered.append(f"Codex（{CODEX_CONFIG}）")
-
+    # 注册范围：用户级（全局）/ 项目级（当前仓库）/ 都配
     if WRITE_PROJECT_MCP:
+        scope = "3"
+    else:
+        print()
+        print("  • 用户级：在任何目录打开客户端都能用 mdmcp（推荐）")
+        print("  • 项目级：只在当前目录打开 Claude Code 才能用（写 .mcp.json，便于跟仓库分发；Codex 不支持项目级）")
+        print("  • 两个都配：全局可用 + 配置随当前仓库分发")
+        scope = ask_choice(
+            "选择注册范围",
+            [
+                ("1", "用户级 —— 全局可用（推荐）"),
+                ("2", "项目级 —— 只在当前目录（写 .mcp.json）"),
+                ("3", "两个都配"),
+            ],
+            default="1",
+        )
+
+    registered: list[str] = []
+    do_user = scope in ("1", "3")
+    do_project = scope in ("2", "3")
+
+    if do_user:
+        if "claude" in targets and claude_bin and _register_claude_user(claude_bin, py, env_block):
+            registered.append("Claude Code（用户级）")
+        if "codex" in targets and _register_codex(py, env_block):
+            registered.append(f"Codex（{CODEX_CONFIG}）")
+    if do_project:
         _write_project_mcp_json(py, env_block)
         registered.append(f"项目级 {MCP_JSON.name}")
 
