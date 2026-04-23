@@ -1,4 +1,4 @@
-"""MCP Server entry point — mdmcp (明道协作 v1 + HAP 网关合并版)."""
+"""MCP Server entry point — mdymcp (明道协作 v1 + HAP 网关合并版)."""
 
 from __future__ import annotations
 
@@ -23,10 +23,10 @@ from . import (
 )
 from .gateway import HapGateway
 
-log = logging.getLogger("mdmcp")
+log = logging.getLogger("mdymcp")
 
 mcp = FastMCP(
-    "mdmcp",
+    "mdymcp",
     instructions=(
         "明道统一 MCP：v1 协作 API（动态/日程/群组/用户/组织/私信/收件箱/账户）+ "
         "HAP 网关（应用/工作表/记录/审批/角色）。无需 OAuth 授权，仅需 .env 配置 "
@@ -100,7 +100,7 @@ def _register_gateway_tools() -> int:
 
 
 _hap_count = _register_gateway_tools()
-log.info("mdmcp 已加载 %d 个本地 v1 工具 + %d 个 HAP 网关工具",
+log.info("mdymcp 已加载 %d 个本地 v1 工具 + %d 个 HAP 网关工具",
          len(mcp._tool_manager._tools) - _hap_count, _hap_count)
 
 

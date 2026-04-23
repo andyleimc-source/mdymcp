@@ -1,4 +1,4 @@
-# mdmcp
+# mdymcp
 
 **明道（Mingdao）统一 MCP Server** — 一次安装，获得 **v1 协作 API 50 个工具 + HAP 网关 48 个工具**，共计 ~98 个工具。
 
@@ -17,20 +17,20 @@
 ```bash
 # 没装 pipx：brew install pipx  或  python3 -m pip install --user pipx && pipx ensurepath
 pipx install mdymcp
-mdmcp-install
+mdymcp-install
 ```
 
-> PyPI 包名是 `mdymcp`（`mdmcp` 这个短名被占用），**安装后命令仍然是 `mdmcp` / `mdmcp-install` / `mdmcp-auth`**。`pipx` 会给 mdmcp 建独立隔离环境，不污染系统 Python。
+> PyPI 包名、命令名、配置目录都统一为 `mdymcp`。`pipx` 会给 mdymcp 建独立隔离环境，不污染系统 Python。
 >
-> 配置写在 `~/.mdmcp/.env`，跨目录都能用。
+> 配置写在 `~/.mdymcp/.env`，跨目录都能用。旧版 `~/.mdmcp/` 会在首次运行 `mdymcp-install` 时自动迁移过来。
 
 ### 方式 B：Clone 仓库（开发者 / 想跟代码）
 
 > 项目目录**不要放 iCloud 同步路径**（如 `~/Desktop`、`~/Documents`），建议放 `~/Downloads`、`~/code` 等本地目录。
 
 ```bash
-git clone https://github.com/andyleimc-source/mdmcp.git
-cd mdmcp
+git clone https://github.com/andyleimc-source/mdymcp.git
+cd mdymcp
 python3 install.py
 ```
 
@@ -44,7 +44,7 @@ python3 install.py
 
 > **多客户端支持**：脚本会扫 `claude`、`codex` 和 `~/.gemini/antigravity/` 三处，**检测到哪个就自动注册到哪个**，多个就都配。手动指定客户端：`--client=claude` / `--client=codex` / `--client=antigravity` / `--client=all`（逗号可组合，例如 `--client=claude,antigravity`）。
 >
-> **Antigravity 注意**：写完配置后需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdmcp；官方暂无自动 reload。
+> **Antigravity 注意**：写完配置后需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdymcp；官方暂无自动 reload。
 >
 > **注册范围**：步骤 4 会问"用户级 / 项目级 / 两个都配"（默认用户级，全局生效）。项目级仅 Claude Code 支持（写 `.mcp.json`）。CI / 想跳过这个问题：加 `--project` 强制项目级 + 用户级。
 
@@ -54,7 +54,7 @@ python3 install.py
 - "列出我的全部应用" → `get_app_list`（HAP）
 - "在 XX 工作表新增一行记录" → `create_record`（HAP）
 
-> 调试模式：`MDMCP_INSTALL_DEBUG=1 python3 install.py` 或 `python3 install.py --debug`，会逐步显示每个 hook 的请求体/响应并 y/n 拦截，仅开发者用。
+> 调试模式：`MDYMCP_INSTALL_DEBUG=1 python3 install.py` 或 `python3 install.py --debug`，会逐步显示每个 hook 的请求体/响应并 y/n 拦截，仅开发者用。
 
 ---
 
@@ -64,25 +64,25 @@ HAP 网关需要在明道**集成中心**做一次个人授权，拿到一对 `r
 
 ### 第 1 步：集成中心 → API 库 → HAP API（个人授权）→ 立即授权
 
-![step1](https://raw.githubusercontent.com/andyleimc-source/mdmcp/main/docs/images/hap-step1-authorize.png)
+![step1](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step1-authorize.png)
 
 进入「集成 → API 库」，找到 **HAP API（个人授权）**，点右上角「立即授权」走完 OAuth 流程。
 
 ### 第 2 步：「我的连接 → 授权」tab，找到刚授权的连接
 
-![step2](https://raw.githubusercontent.com/andyleimc-source/mdmcp/main/docs/images/hap-step2-connections.png)
+![step2](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step2-connections.png)
 
 ### 第 3 步：进入连接，在账户行点 `...` → 查看日志
 
-![step3](https://raw.githubusercontent.com/andyleimc-source/mdmcp/main/docs/images/hap-step3-account-menu.png)
+![step3](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step3-account-menu.png)
 
 ### 第 4 步：在日志列表中找一条「获取 token」→ 点查看详情
 
-![step4](https://raw.githubusercontent.com/andyleimc-source/mdmcp/main/docs/images/hap-step4-log-list.png)
+![step4](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step4-log-list.png)
 
 ### 第 5 步：在「返回值」标签里复制 `access_token` 和 `refresh_token`
 
-![step5](https://raw.githubusercontent.com/andyleimc-source/mdmcp/main/docs/images/hap-step5-tokens.png)
+![step5](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step5-tokens.png)
 
 把这两个值在 install.py 提示时分别粘到：
 - `MD_HAP_TOKEN:` ← 粘 `access_token`
@@ -130,7 +130,7 @@ HAP 工具由远端网关动态提供；具体参数 schema 以启动时 `tools/
 
 ```
 ┌──────────────┐ stdio ┌──────────────────────────────┐
-│ Claude Code  │──────▶│        mdmcp.server          │
+│ Claude Code  │──────▶│        mdymcp.server         │
 └──────────────┘       ├──────────────────────────────┤
                        │ [静态注册] 50 个 v1 工具     │──┐
                        ├──────────────────────────────┤  │HTTP
@@ -185,13 +185,13 @@ MD_HAP_KEY=            # install.py 自动写入
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| `Missing MD_ACCOUNT_ID or MD_KEY` | .env 没配 | 重跑 `mdmcp-install`（或 clone 场景的 `python3 install.py`） |
-| `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | HAP 没注册 | 重跑 `mdmcp-install` 走 HAP 步骤 |
+| `Missing MD_ACCOUNT_ID or MD_KEY` | .env 没配 | 重跑 `mdymcp-install`（或 clone 场景的 `python3 install.py`） |
+| `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | HAP 没注册 | 重跑 `mdymcp-install` 走 HAP 步骤 |
 | `SSL: CERTIFICATE_VERIFY_FAILED` | macOS 上 python.org 安装的 Python 没装根证书 | 一次性执行 `/Applications/Python\ 3.x/Install\ Certificates.command`（3.x 填你的版本号） |
-| Antigravity 里看不到 mdmcp | 配置文件已写但 IDE 未刷新 | 在 Antigravity「Manage MCP Servers」点 **Refresh**；如果 IDE 是从 macOS GUI 启动且找不到 `python` / `mdmcp` 命令，改为从终端启动 Antigravity（GUI 继承不到 shell 的 PATH） |
+| Antigravity 里看不到 mdymcp | 配置文件已写但 IDE 未刷新 | 在 Antigravity「Manage MCP Servers」点 **Refresh**；如果 IDE 是从 macOS GUI 启动且找不到 `python` / `mdymcp` 命令，改为从终端启动 Antigravity（GUI 继承不到 shell 的 PATH） |
 | `HAP token 接口返回空` | hap_key 在服务端失效（refresh_token 过期等） | 按上面文档重新拿一对 token + refresh_token，重跑 install |
 | 启动显示 `HAP 网关工具 0 个` | `/mcp` 握手失败 | 网络问题；v1 工具不受影响 |
-| HAP 工具返回 `Http Headers verification failed` | HAP 后端对该工具有额外鉴权要求 | HAP 侧既有问题（Node 版也有），非 mdmcp bug |
+| HAP 工具返回 `Http Headers verification failed` | HAP 后端对该工具有额外鉴权要求 | HAP 侧既有问题（Node 版也有），非 mdymcp bug |
 | `ensurepip` 失败、venv 装不上 | python.org 的 3.14 安装包 ensurepip 有 bug；或目录在 iCloud 同步范围被吞文件 | 换 Homebrew `python@3.12`；项目挪出 `~/Desktop` / `~/Documents` |
 
 ---
@@ -201,9 +201,9 @@ MD_HAP_KEY=            # install.py 自动写入
 | 项目 | 覆盖 | 状态 |
 |------|-----|------|
 | `mdold` | v1 + 本地 OAuth | 已停止维护 |
-| `md-cloud` | v1 + 云端 token | 已由 mdmcp 取代 |
-| `hap-mcp-cloud-refresh` | HAP 代理（Node） | 已由 mdmcp 取代 |
-| **mdmcp** | v1 + HAP | **推荐使用** |
+| `md-cloud` | v1 + 云端 token | 已由 mdymcp 取代 |
+| `hap-mcp-cloud-refresh` | HAP 代理（Node） | 已由 mdymcp 取代 |
+| **mdymcp** | v1 + HAP | **推荐使用** |
 
 ---
 

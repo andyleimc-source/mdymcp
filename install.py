@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""mdmcp 一键交互式安装脚本（Clone 模式入口）。
+"""mdymcp 一键交互式安装脚本（Clone 模式入口）。
 
 用法：clone 仓库后在项目根目录运行
     python3 install.py
 
 脚本会：
   1) 可选 git pull 拉最新代码
-  2) 创建 .venv 并安装 mdmcp
-  3) 把控制权交给 venv 里的 `mdmcp-install --from-clone <repo-root>`
+  2) 创建 .venv 并安装 mdymcp
+  3) 把控制权交给 venv 里的 `mdymcp-install --from-clone <repo-root>`
      完成 OAuth、凭据验证、MCP 客户端注册
 
-PyPI 用户请直接 `pipx install mdmcp && mdmcp-install`，不用跑这个脚本。
+PyPI 用户请直接用 uv 一行安装（见 README），不用跑这个脚本。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ VENV = ROOT / ".venv"
 
 
 def info(msg: str) -> None:
-    print(f"\033[36m[mdmcp]\033[0m {msg}")
+    print(f"\033[36m[mdymcp]\033[0m {msg}")
 
 
 def ok(msg: str) -> None:
@@ -72,7 +72,7 @@ def step_venv() -> Path:
     else:
         info(f"已存在 {VENV}，跳过创建")
 
-    info("安装/更新 mdmcp 包")
+    info("安装/更新 mdymcp 包")
     run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
     # --force-reinstall --no-deps 保证即使版本号没变也能覆盖本地改动
     run([str(py), "-m", "pip", "install", "--quiet", "--upgrade",
@@ -85,7 +85,7 @@ def step_venv() -> Path:
 def preflight() -> None:
     major, minor = sys.version_info[:2]
     if (major, minor) < (3, 10):
-        err(f"Python {major}.{minor} 过低，mdmcp 要求 ≥ 3.10。")
+        err(f"Python {major}.{minor} 过低，mdymcp 要求 ≥ 3.10。")
         sys.exit(1)
     if shutil.which("python3") is None:
         err("未检测到 python3。请先安装 Python 3.10+。")
@@ -100,12 +100,12 @@ def preflight() -> None:
 
 def main() -> None:
     print("=" * 56)
-    print("  mdmcp 交互式安装（Clone 模式）")
+    print("  mdymcp 交互式安装（Clone 模式）")
     print("=" * 56)
     preflight()
     py = step_venv()
-    # 把剩下的交互流程交给 venv 里的 mdmcp-install，保持单一实现
-    installer = VENV / "bin" / "mdmcp-install"
+    # 把剩下的交互流程交给 venv 里的 mdymcp-install，保持单一实现
+    installer = VENV / "bin" / "mdymcp-install"
     if not installer.exists():
         err(f"{installer} 不存在，pip install 可能失败了")
         sys.exit(1)

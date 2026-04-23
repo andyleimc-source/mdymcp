@@ -18,9 +18,9 @@ from .auth import ensure_hap_token
 
 GATEWAY_URL = "https://api2.mingdao.com/mcp"
 PROTOCOL_VERSION = "2025-06-18"
-CLIENT_INFO = {"name": "mdmcp", "version": "0.1.0"}
+CLIENT_INFO = {"name": "mdymcp", "version": "0.2.0"}
 
-log = logging.getLogger("mdmcp.gateway")
+log = logging.getLogger("mdymcp.gateway")
 
 
 class GatewayError(RuntimeError):
@@ -47,7 +47,7 @@ class HapGateway:
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json, text/event-stream",
-                "User-Agent": "mdmcp/0.1",
+                "User-Agent": "mdymcp/0.2",
             },
             method="POST",
         )

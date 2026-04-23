@@ -23,7 +23,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
@@ -32,14 +31,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/andyleimc-source/mdmcp"
-Repository = "https://github.com/andyleimc-source/mdmcp"
-Issues = "https://github.com/andyleimc-source/mdmcp/issues"
+Homepage = "https://github.com/andyleimc-source/mdymcp"
+Repository = "https://github.com/andyleimc-source/mdymcp"
+Issues = "https://github.com/andyleimc-source/mdymcp/issues"
 
 [project.scripts]
-mdmcp = "mdmcp.server:main"
-mdmcp-auth = "mdmcp.cli_auth:main"
-mdmcp-install = "mdmcp.cli_install:main"
+mdymcp = "mdymcp.server:main"
+mdymcp-auth = "mdymcp.cli_auth:main"
+mdymcp-install = "mdymcp.cli_install:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

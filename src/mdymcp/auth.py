@@ -30,7 +30,7 @@ _SSL_CTX = _ssl_ctx()
 BASE_API_URL = "https://api.mingdao.com"
 HOOK_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5"
 
-# OAuth 自助注册（mdmcp-auth 命令使用）
+# OAuth 自助注册（mdymcp-auth 命令使用）
 APP_KEY_DEFAULT = "6A228C49DAC4"
 CALLBACK_PORT_DEFAULT = 8080
 REGISTER_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks/NjllNjFkYjM2NTAyMDc5NzgxMGNmZDll"
@@ -43,12 +43,15 @@ _cache: dict[str, Any] = {"token": "", "expires_at": 0}
 _hap_cache: dict[str, Any] = {"hap_key": "", "token": "", "expires_at": 0}
 
 
-MDMCP_USER_HOME = Path.home() / ".mdmcp"
+MDYMCP_USER_HOME = Path.home() / ".mdymcp"
+# 兼容 0.1.x 的老路径；新路径优先，读到老路径时不强制迁移，等 install 再搬家
+MDYMCP_USER_HOME_LEGACY = Path.home() / ".mdmcp"
 
 
 def _load_env() -> None:
-    """Lazy load .env from cwd → ~/.mdmcp → package parent (clone repo root)."""
-    for d in [Path.cwd(), MDMCP_USER_HOME, Path(__file__).resolve().parent.parent.parent]:
+    """Lazy load .env from cwd → ~/.mdymcp → ~/.mdmcp (legacy) → package parent (clone repo root)."""
+    for d in [Path.cwd(), MDYMCP_USER_HOME, MDYMCP_USER_HOME_LEGACY,
+              Path(__file__).resolve().parent.parent.parent]:
         env = d / ".env"
         if not env.exists():
             continue
@@ -87,7 +90,7 @@ def ensure_access_token() -> str:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "mdmcp/0.1",
+            "User-Agent": "mdymcp/0.2",
         },
         method="POST",
     )
@@ -111,7 +114,7 @@ def _hap_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "mdmcp/0.1",
+            "User-Agent": "mdymcp/0.2",
         },
         method="POST",
     )
@@ -166,7 +169,7 @@ def hap_register(account_id: str, refresh_token: str, hap_token: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# OAuth 自助注册流程（mdmcp-auth 命令）
+# OAuth 自助注册流程（mdymcp-auth 命令）
 # ─────────────────────────────────────────────
 
 import secrets
@@ -180,14 +183,14 @@ from threading import Thread
 
 
 _CALLBACK_HTML_OK = """<!doctype html>
-<html><head><meta charset="utf-8"><title>mdmcp 授权成功</title></head>
+<html><head><meta charset="utf-8"><title>mdymcp 授权成功</title></head>
 <body style="font-family:system-ui;max-width:560px;margin:80px auto;padding:0 24px;color:#222">
 <h2>✅ 授权成功</h2>
 <p>已收到授权码，正在和服务端交换凭据。请回到终端查看结果，本页面可以关闭。</p>
 </body></html>"""
 
 _CALLBACK_HTML_ERR = """<!doctype html>
-<html><head><meta charset="utf-8"><title>mdmcp 授权失败</title></head>
+<html><head><meta charset="utf-8"><title>mdymcp 授权失败</title></head>
 <body style="font-family:system-ui;max-width:560px;margin:80px auto;padding:0 24px;color:#222">
 <h2>❌ 授权失败</h2>
 <p>{msg}</p><p>请回到终端查看详细错误。</p>
@@ -398,7 +401,7 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
         server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
     except OSError as e:
         raise RuntimeError(
-            f"端口 {port} 已被占用。用 MD_CALLBACK_PORT=xxxx mdmcp-auth 换端口"
+            f"端口 {port} 已被占用。用 MD_CALLBACK_PORT=xxxx mdymcp-auth 换端口"
             f"（明道后台的回调地址需要同步更新）。底层错误：{e}"
         ) from e
 
@@ -424,7 +427,7 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
 
     res = _CallbackHandler.result
     if not res:
-        raise RuntimeError("等待授权超时（5 分钟），请重新运行 mdmcp-auth。")
+        raise RuntimeError("等待授权超时（5 分钟），请重新运行 mdymcp-auth。")
     if "error" in res:
         raise RuntimeError(f"授权失败：{res['error']}")
     if res.get("state") != state:
@@ -440,7 +443,7 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "mdmcp-auth/0.1",
+            "User-Agent": "mdymcp-auth/0.2",
         },
         method="POST",
     )

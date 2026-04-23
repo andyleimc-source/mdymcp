@@ -1,10 +1,10 @@
-"""CLI 入口：`mdmcp-install` — 交互式安装/配置。
+"""CLI 入口：`mdymcp-install` — 交互式安装/配置。
 
 两种调用方式：
-  1) PyPI 场景：用户 `pipx install mdmcp` 后直接 `mdmcp-install`，
-     配置写到 `~/.mdmcp/`。
-  2) Clone 场景：`install.py` 在本仓库里创建 .venv 后调用
-     `.venv/bin/mdmcp-install --from-clone <repo-root>`，配置写到仓库根。
+  1) PyPI 场景：用户 `uv tool install mdymcp` 后直接 `mdymcp-install`（或
+     `uvx --from mdymcp mdymcp-install` 一次性），配置写到 `~/.mdymcp/`。
+  2) Clone 场景：`install.py` 在本仓库里用 uv 建环境后调用
+     `mdymcp-install --from-clone <repo-root>`，配置写到仓库根。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 ANTIGRAVITY_CONFIG = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
 ALL_CLIENTS = {"claude", "codex", "antigravity"}
-DEBUG = os.getenv("MDMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
+DEBUG = os.getenv("MDYMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
         or "--debug" in sys.argv
 
 
@@ -43,7 +43,7 @@ def _parse_from_clone() -> Path | None:
 
 
 def info(msg: str) -> None:
-    print(f"\033[36m[mdmcp]\033[0m {msg}")
+    print(f"\033[36m[mdymcp]\033[0m {msg}")
 
 
 def ok(msg: str) -> None:
@@ -120,7 +120,7 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     info(f"授权完成后会写入 {env_file}")
     # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到
     code = (
-        "from pathlib import Path; from mdmcp.cli_auth import main;"
+        "from pathlib import Path; from mdymcp.cli_auth import main;"
         f"import os; os.chdir({str(root)!r});"
         "main()"
     )
@@ -178,7 +178,7 @@ def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
     out = dict(creds)
 
     success, output = _stepwise_call(py, env,
-        "from mdmcp.auth import ensure_access_token; print(len(ensure_access_token()))")
+        "from mdymcp.auth import ensure_access_token; print(len(ensure_access_token()))")
     if not success:
         err(f"v1 token 换取失败：{output.strip()}"); sys.exit(1)
     ok("v1 凭据有效")
@@ -191,7 +191,7 @@ def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
         info(f"复用已有 hap_key (…{creds['MD_HAP_KEY'][-6:]})")
     else:
         reg_code = (
-            "from mdmcp.auth import hap_register;"
+            "from mdymcp.auth import hap_register;"
             "import os;"
             "print(hap_register(os.environ['MD_ACCOUNT_ID'], os.environ['MD_HAP_REFRESH_TOKEN'], os.environ['MD_HAP_TOKEN']))"
         )
@@ -206,7 +206,7 @@ def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
         ok("HAP 已注册（hap_key 写入 .env）")
 
     success, output = _stepwise_call(py, env,
-        "from mdmcp.auth import ensure_hap_token; print(len(ensure_hap_token()))")
+        "from mdymcp.auth import ensure_hap_token; print(len(ensure_hap_token()))")
     if success:
         ok("HAP 凭据有效（48 个 HAP 工具可用）")
     else:
@@ -222,12 +222,14 @@ def _build_env_block(creds: dict[str, str]) -> dict[str, str]:
 
 
 def _register_claude_user(claude_bin: str, py: Path, env_block: dict[str, str]) -> bool:
-    run([claude_bin, "mcp", "remove", "mdmcp", "--scope", "user"],
-        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    cmd = [claude_bin, "mcp", "add", "mdmcp", "--scope", "user"]
+    # 清理 0.1.x 老注册 + 当前名字（避免重复注册）
+    for legacy_name in ("mdmcp", "mdymcp"):
+        run([claude_bin, "mcp", "remove", legacy_name, "--scope", "user"],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cmd = [claude_bin, "mcp", "add", "mdymcp", "--scope", "user"]
     for k, v in env_block.items():
         cmd += ["-e", f"{k}={v}"]
-    cmd += ["--", str(py), "-m", "mdmcp.server"]
+    cmd += ["--", str(py), "-m", "mdymcp.server"]
     try:
         run(cmd, stdout=subprocess.DEVNULL)
         return True
@@ -239,14 +241,16 @@ def _register_claude_user(claude_bin: str, py: Path, env_block: dict[str, str]) 
 def _write_project_mcp_json(root: Path, py: Path, env_block: dict[str, str]) -> None:
     mcp_json = root / ".mcp.json"
     server_entry = {"type": "stdio", "command": str(py),
-                    "args": ["-m", "mdmcp.server"], "env": env_block}
+                    "args": ["-m", "mdymcp.server"], "env": env_block}
     existing: dict = {}
     if mcp_json.exists():
         try:
             existing = json.loads(mcp_json.read_text(encoding="utf-8"))
         except Exception:
             warn(f"{mcp_json} 无法解析，将覆盖")
-    existing.setdefault("mcpServers", {})["mdmcp"] = server_entry
+    servers = existing.setdefault("mcpServers", {})
+    servers.pop("mdmcp", None)  # 清理老名
+    servers["mdymcp"] = server_entry
     mcp_json.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
                         encoding="utf-8")
 
@@ -260,16 +264,19 @@ def _register_codex(py: Path, env_block: dict[str, str]) -> bool:
     for line in text.splitlines():
         s = line.strip()
         if s.startswith("[") and s.endswith("]"):
-            skip = s.startswith("[mcp_servers.mdmcp]") \
-                   or s.startswith("[mcp_servers.mdmcp.")
+            # 同时清理老名 [mcp_servers.mdmcp] 和新名 [mcp_servers.mdymcp]
+            skip = (s.startswith("[mcp_servers.mdmcp]")
+                    or s.startswith("[mcp_servers.mdmcp.")
+                    or s.startswith("[mcp_servers.mdymcp]")
+                    or s.startswith("[mcp_servers.mdymcp."))
         if not skip:
             out_lines.append(line)
 
     env_inline = ", ".join(f'{k} = "{v}"' for k, v in env_block.items())
     block = [
-        "[mcp_servers.mdmcp]",
+        "[mcp_servers.mdymcp]",
         f'command = "{py}"',
-        'args = ["-m", "mdmcp.server"]',
+        'args = ["-m", "mdymcp.server"]',
         f"env = {{ {env_inline} }}",
     ]
     body = "\n".join(out_lines).rstrip()
@@ -283,7 +290,7 @@ def _register_antigravity(py: Path, env_block: dict[str, str]) -> bool:
     ANTIGRAVITY_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     server_entry = {
         "command": str(py),
-        "args": ["-m", "mdmcp.server"],
+        "args": ["-m", "mdymcp.server"],
         "env": env_block,
     }
     existing: dict = {}
@@ -292,7 +299,9 @@ def _register_antigravity(py: Path, env_block: dict[str, str]) -> bool:
             existing = json.loads(ANTIGRAVITY_CONFIG.read_text(encoding="utf-8"))
         except Exception:
             warn(f"{ANTIGRAVITY_CONFIG} 无法解析，将覆盖")
-    existing.setdefault("mcpServers", {})["mdmcp"] = server_entry
+    servers = existing.setdefault("mcpServers", {})
+    servers.pop("mdmcp", None)  # 清理老名
+    servers["mdymcp"] = server_entry
     ANTIGRAVITY_CONFIG.write_text(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -358,7 +367,7 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
         scope = "3"
     else:
         print()
-        print("  • 用户级：在任何目录打开客户端都能用 mdmcp（推荐）")
+        print("  • 用户级：在任何目录打开客户端都能用 mdymcp（推荐）")
         print("  • 项目级：只在当前目录打开 Claude Code 才能用（写 .mcp.json，便于跟仓库分发；Codex / Antigravity 不支持项目级）")
         print("  • 两个都配：全局可用 + 配置随当前仓库分发")
         scope = ask_choice(
@@ -387,16 +396,16 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
     if registered:
         ok("已注册到：" + " + ".join(registered))
         if "antigravity" in targets:
-            info("Antigravity 需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdmcp")
+            info("Antigravity 需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdymcp")
     else:
         warn("没有成功注册的客户端，下面是手动命令：")
         env_args = " ".join(f"-e {k}={v}" for k, v in env_block.items())
-        print(f"\nclaude mcp add mdmcp --scope user {env_args} -- {py} -m mdmcp.server")
+        print(f"\nclaude mcp add mdymcp --scope user {env_args} -- {py} -m mdymcp.server")
 
 
 def step_done() -> None:
     info("步骤 4/4：完成")
-    ok("mdmcp 安装完毕。重启 Claude Code 即可使用。")
+    ok("mdymcp 安装完毕。重启客户端即可使用。")
     print("\n试试在 Claude Code 里说：")
     print("  · 「帮我看看最近的公司动态」")
     print("  · 「创建一个明天上午 10 点的日程」")
@@ -405,7 +414,7 @@ def step_done() -> None:
 
 def main() -> None:
     print("=" * 56)
-    print("  mdmcp 交互式安装")
+    print("  mdymcp 交互式安装")
     print("=" * 56)
 
     from_clone = _parse_from_clone()
@@ -416,7 +425,11 @@ def main() -> None:
         root = from_clone
         info(f"Clone 模式：配置写入仓库根 {root}")
     else:
-        root = Path.home() / ".mdmcp"
+        root = Path.home() / ".mdymcp"
+        legacy_root = Path.home() / ".mdmcp"
+        if legacy_root.exists() and not root.exists():
+            info(f"检测到旧配置 {legacy_root}，迁移到 {root}")
+            legacy_root.rename(root)
         root.mkdir(parents=True, exist_ok=True)
         info(f"PyPI 模式：配置写入 {root}")
 

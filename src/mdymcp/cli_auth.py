@@ -1,4 +1,4 @@
-"""CLI 入口：`mdmcp-auth` — 浏览器一键 OAuth 授权，自动写 .env。"""
+"""CLI 入口：`mdymcp-auth` — 浏览器一键 OAuth 授权，自动写 .env。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def main() -> None:
     except Exception as e:
         print(f"\n❌ {e}", file=sys.stderr)
         sys.exit(1)
-    print("\n✅ 完成。现在可以在 .mcp.json 中配置 mdmcp 并重启 Claude Code。")
+    print("\n✅ 完成。现在可以在 .mcp.json 中配置 mdymcp 并重启 Claude Code。")
 
 
 if __name__ == "__main__":
