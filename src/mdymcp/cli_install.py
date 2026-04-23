@@ -19,7 +19,32 @@ from pathlib import Path
 
 CODEX_CONFIG = Path.home() / ".codex" / "config.toml"
 ANTIGRAVITY_CONFIG = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
-ALL_CLIENTS = {"claude", "codex", "antigravity"}
+CURSOR_USER_CONFIG = Path.home() / ".cursor" / "mcp.json"
+WINDSURF_USER_CONFIG = Path.home() / ".codeium" / "windsurf" / "mcp_config.json"
+ALL_CLIENTS = {"claude", "codex", "antigravity", "cursor", "windsurf", "trae", "vscode"}
+
+
+def _trae_user_config() -> Path | None:
+    """Trae 是 VS Code fork，mcp.json 走 VS Code 的 User 目录约定。
+    同时兼容国际版 (Trae) 和国内版 (Trae CN)：优先返回已存在父目录的那个。
+    """
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    elif sys.platform.startswith("win"):
+        base = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
+    else:
+        base = Path.home() / ".config"
+    candidates = [base / name / "User" / "mcp.json" for name in ("Trae", "Trae CN")]
+    # 已存在（或父目录已存在）的优先
+    for c in candidates:
+        if c.exists() or c.parent.exists() or c.parent.parent.exists():
+            return c
+    return candidates[0]  # fallback：默认国际版路径
+
+
+def _vscode_project_config(root: Path) -> Path:
+    """VS Code（含 Copilot Chat）项目级 MCP 配置 —— 推荐项目级，能跟仓库走。"""
+    return root / ".vscode" / "mcp.json"
 DEBUG = os.getenv("MDYMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
         or "--debug" in sys.argv
 
@@ -333,29 +358,88 @@ def _register_codex(py: Path, env_block: dict[str, str]) -> bool:
     return True
 
 
-def _register_antigravity(py: Path, env_block: dict[str, str]) -> bool:
-    """写 ~/.gemini/antigravity/mcp_config.json，合并已有 mcpServers。"""
-    ANTIGRAVITY_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+def _write_mcp_servers_json(config_path: Path, py: Path, env_block: dict[str, str],
+                             *, key: str = "mcpServers", include_type: bool = False) -> bool:
+    """通用写入器：Antigravity / Cursor / Windsurf / Trae / VS Code 都是相似的 JSON 结构，
+    仅顶层 key（mcpServers vs servers）和是否带 `type: stdio` 有差。合并已有配置、清理老名。
+    """
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     server_cmd, server_args = _build_server_command(py)
-    server_entry = {
-        "command": server_cmd,
-        "args": server_args,
-        "env": env_block,
-    }
+    server_entry: dict = {"command": server_cmd, "args": server_args, "env": env_block}
+    if include_type:
+        server_entry = {"type": "stdio", **server_entry}
     existing: dict = {}
-    if ANTIGRAVITY_CONFIG.exists():
+    if config_path.exists():
         try:
-            existing = json.loads(ANTIGRAVITY_CONFIG.read_text(encoding="utf-8"))
+            existing = json.loads(config_path.read_text(encoding="utf-8"))
         except Exception:
-            warn(f"{ANTIGRAVITY_CONFIG} 无法解析，将覆盖")
-    servers = existing.setdefault("mcpServers", {})
+            warn(f"{config_path} 无法解析，将覆盖")
+    servers = existing.setdefault(key, {})
     servers.pop("mdmcp", None)  # 清理老名
     servers["mdymcp"] = server_entry
-    ANTIGRAVITY_CONFIG.write_text(
+    config_path.write_text(
         json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     return True
+
+
+def _register_antigravity(py: Path, env_block: dict[str, str]) -> bool:
+    return _write_mcp_servers_json(ANTIGRAVITY_CONFIG, py, env_block)
+
+
+def _register_cursor(py: Path, env_block: dict[str, str]) -> bool:
+    return _write_mcp_servers_json(CURSOR_USER_CONFIG, py, env_block)
+
+
+def _register_windsurf(py: Path, env_block: dict[str, str]) -> bool:
+    return _write_mcp_servers_json(WINDSURF_USER_CONFIG, py, env_block)
+
+
+def _register_trae(py: Path, env_block: dict[str, str]) -> bool:
+    path = _trae_user_config()
+    if path is None:
+        return False
+    return _write_mcp_servers_json(path, py, env_block)
+
+
+def _register_vscode(py: Path, env_block: dict[str, str], project_root: Path) -> bool:
+    """VS Code（Copilot Chat）用项目级 `.vscode/mcp.json`，顶层 key 是 `servers`、需要 type。"""
+    return _write_mcp_servers_json(
+        _vscode_project_config(project_root), py, env_block,
+        key="servers", include_type=True,
+    )
+
+
+def _detect_clients() -> dict[str, bool]:
+    """返回每个 client 是否检测到。顺序即输出顺序。"""
+    trae_path = _trae_user_config()
+    return {
+        "claude":      shutil.which("claude") is not None,
+        "codex":       shutil.which("codex") is not None
+                       or CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists(),
+        "cursor":      CURSOR_USER_CONFIG.parent.exists() or CURSOR_USER_CONFIG.exists(),
+        "windsurf":    WINDSURF_USER_CONFIG.parent.exists() or WINDSURF_USER_CONFIG.exists(),
+        "antigravity": ANTIGRAVITY_CONFIG.parent.exists(),
+        "trae":        bool(trae_path and (trae_path.parent.exists()
+                                           or trae_path.parent.parent.exists())),
+        "vscode":      shutil.which("code") is not None
+                       or shutil.which("code-insiders") is not None
+                       or (Path.home() / "Library" / "Application Support" / "Code").exists()
+                       or (Path.home() / ".config" / "Code").exists()
+                       or (Path(os.environ.get("APPDATA", "")) / "Code").exists(),
+    }
+
+
+CLIENT_LABELS = {
+    "claude":      "Claude Code",
+    "codex":       "Codex CLI",
+    "cursor":      "Cursor",
+    "windsurf":    "Windsurf",
+    "antigravity": "Gemini Antigravity",
+    "trae":        "Trae",
+    "vscode":      "VS Code (Copilot Chat)",
+}
 
 
 def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
@@ -363,93 +447,98 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
     info("步骤 3/4：注册到 MCP 客户端")
     env_block = _build_env_block(creds)
 
-    claude_bin = shutil.which("claude")
-    codex_bin_or_cfg = shutil.which("codex") or (CODEX_CONFIG.exists() or CODEX_CONFIG.parent.exists())
-    antigravity_detected = ANTIGRAVITY_CONFIG.parent.exists()
+    detection = _detect_clients()
+    detected = {c for c, hit in detection.items() if hit}
+    not_detected = {c for c, hit in detection.items() if not hit}
 
-    detected: set[str] = set()
-    if claude_bin:
-        detected.add("claude")
-    if codex_bin_or_cfg:
-        detected.add("codex")
-    if antigravity_detected:
-        detected.add("antigravity")
-
+    # 决定目标客户端
     if client_override is not None:
         targets = client_override
         info(f"--client 指定客户端：{', '.join(sorted(targets)) or '(空)'}")
     else:
-        if detected:
-            print(f"\n  自动检测到已安装客户端：{', '.join(sorted(detected))}")
-        else:
-            print("\n  未检测到 claude / codex / antigravity（依然可以选，装上后配置即可生效）")
-        # 默认值：检测到 ≥2 个 → 全部检测到的（4）；只检测到 1 个 → 那一个；都没 → Claude
-        if len(detected) >= 2:
-            default_choice = "4"
-        elif detected == {"codex"}:
-            default_choice = "2"
-        elif detected == {"antigravity"}:
-            default_choice = "3"
-        else:
-            default_choice = "1"
-        print("  • Claude Code：写到 ~/.claude.json（claude mcp add）")
-        print("  • Codex CLI：写到 ~/.codex/config.toml")
-        print("  • Antigravity：写到 ~/.gemini/antigravity/mcp_config.json")
-        client_choice = ask_choice(
-            "选择 MCP 客户端",
-            [("1", "Claude Code"),
-             ("2", "Codex"),
-             ("3", "Antigravity"),
-             ("4", "全部检测到的（或全部三个）")],
-            default=default_choice,
-        )
-        if client_choice == "1":
-            targets = {"claude"}
-        elif client_choice == "2":
-            targets = {"codex"}
-        elif client_choice == "3":
-            targets = {"antigravity"}
-        else:
-            targets = detected if detected else set(ALL_CLIENTS)
-
-    if write_project:
-        scope = "3"
-    else:
         print()
-        print("  • 用户级：在任何目录打开客户端都能用 mdymcp（推荐）")
-        print("  • 项目级：只在当前目录打开 Claude Code 才能用（写 .mcp.json，便于跟仓库分发；Codex / Antigravity 不支持项目级）")
-        print("  • 两个都配：全局可用 + 配置随当前仓库分发")
-        scope = ask_choice(
-            "选择注册范围",
-            [("1", "用户级 —— 全局可用（推荐）"),
-             ("2", "项目级 —— 只在当前目录（写 .mcp.json）"),
-             ("3", "两个都配")],
-            default="1",
+        if detected:
+            hit_labels = ', '.join(CLIENT_LABELS[c] for c in sorted(detected))
+            print(f"  检测到：{hit_labels}")
+        if not_detected:
+            miss_labels = ', '.join(CLIENT_LABELS[c] for c in sorted(not_detected))
+            print(f"  未检测到：{miss_labels}")
+        if not detected:
+            print("\n  一个都没识别出来。你可以继续手动选择（装上 IDE 后这份配置即生效）。")
+            targets = set()
+        elif ask_yes(f"\n注册到上面检测到的 {len(detected)} 个客户端？", default=True):
+            targets = set(detected)
+        else:
+            # 手选：列出全部 7 个，逗号分隔索引
+            print("\n  手动选择（逗号分隔序号，回车跳过）：")
+            numbered = list(CLIENT_LABELS.items())
+            for i, (k, label) in enumerate(numbered, 1):
+                marker = "✓" if detection[k] else " "
+                print(f"    [{i}] {marker} {label}")
+            ans = input("  选择: ").strip()
+            picks: set[str] = set()
+            for token in ans.replace("，", ",").split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    idx = int(token)
+                    if 1 <= idx <= len(numbered):
+                        picks.add(numbered[idx - 1][0])
+                except ValueError:
+                    pass
+            targets = picks
+
+    # 项目级：Claude .mcp.json + VS Code 的 .vscode/mcp.json 都属于项目级
+    do_project = write_project
+    if not do_project and not client_override and targets:
+        do_project = ask_yes(
+            f"\n同时在当前目录写项目级配置？"
+            f"（.mcp.json for Claude Code / .vscode/mcp.json for VS Code；便于随仓库分发）",
+            default=False,
         )
 
     registered: list[str] = []
-    do_user = scope in ("1", "3")
-    do_project = scope in ("2", "3")
+    cwd = Path.cwd()
 
-    if do_user:
-        if "claude" in targets and claude_bin and _register_claude_user(claude_bin, py, env_block):
-            registered.append("Claude Code（用户级）")
-        if "codex" in targets and _register_codex(py, env_block):
-            registered.append(f"Codex（{CODEX_CONFIG}）")
-        if "antigravity" in targets and _register_antigravity(py, env_block):
-            registered.append(f"Antigravity（{ANTIGRAVITY_CONFIG}）")
+    # 用户级
+    if "claude" in targets and detection["claude"]:
+        claude_bin = shutil.which("claude")
+        if claude_bin and _register_claude_user(claude_bin, py, env_block):
+            registered.append(f"{CLIENT_LABELS['claude']}（用户级）")
+    if "codex" in targets and _register_codex(py, env_block):
+        registered.append(f"{CLIENT_LABELS['codex']}（{CODEX_CONFIG}）")
+    if "cursor" in targets and _register_cursor(py, env_block):
+        registered.append(f"{CLIENT_LABELS['cursor']}（{CURSOR_USER_CONFIG}）")
+    if "windsurf" in targets and _register_windsurf(py, env_block):
+        registered.append(f"{CLIENT_LABELS['windsurf']}（{WINDSURF_USER_CONFIG}）")
+    if "antigravity" in targets and _register_antigravity(py, env_block):
+        registered.append(f"{CLIENT_LABELS['antigravity']}（{ANTIGRAVITY_CONFIG}）")
+    if "trae" in targets:
+        trae_path = _trae_user_config()
+        if trae_path and _register_trae(py, env_block):
+            registered.append(f"{CLIENT_LABELS['trae']}（{trae_path}）")
+
+    # 项目级
     if do_project:
-        _write_project_mcp_json(Path.cwd(), py, env_block)
-        registered.append(f"项目级 .mcp.json（{Path.cwd()}）")
+        _write_project_mcp_json(cwd, py, env_block)
+        registered.append(f"Claude Code 项目级 .mcp.json（{cwd}）")
+    if "vscode" in targets:
+        # VS Code 只有项目级（我们不碰它的全局 profile）
+        if _register_vscode(py, env_block, cwd):
+            registered.append(f"{CLIENT_LABELS['vscode']}（{_vscode_project_config(cwd)}）")
 
     if registered:
-        ok("已注册到：" + " + ".join(registered))
+        ok("已注册到：\n  • " + "\n  • ".join(registered))
         if "antigravity" in targets:
             info("Antigravity 需要在 IDE 里打开「Manage MCP Servers → Refresh」才能看到 mdymcp")
+        if "cursor" in targets or "windsurf" in targets or "trae" in targets or "vscode" in targets:
+            info("Cursor / Windsurf / Trae / VS Code 需要重启或在 MCP 设置里刷新")
     else:
-        warn("没有成功注册的客户端，下面是手动命令：")
+        warn("没有成功注册的客户端。手动命令（以 Claude Code 为例）：")
         env_args = " ".join(f"-e {k}={v}" for k, v in env_block.items())
-        print(f"\nclaude mcp add mdymcp --scope user {env_args} -- {py} -m mdymcp.server")
+        server_cmd, server_args = _build_server_command(py)
+        print(f"\nclaude mcp add mdymcp --scope user {env_args} -- {server_cmd} {' '.join(server_args)}")
 
 
 def step_done() -> None:
