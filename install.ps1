@@ -30,7 +30,7 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 Info "安装 / 升级 mdymcp（uv 会自动挑合适的 Python 解释器）"
-uv tool install --upgrade mdymcp
+uv tool install --upgrade --refresh mdymcp
 
 $uvToolBin = & uv tool dir --bin 2>$null
 if (-not $uvToolBin) { $uvToolBin = "$env:USERPROFILE\.local\bin" }

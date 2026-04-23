@@ -29,7 +29,8 @@ else
 fi
 
 info "安装 / 升级 mdymcp（uv 会自动挑合适的 Python 解释器）"
-uv tool install --upgrade mdymcp
+# --refresh 强制 uv 跳过 PyPI 索引缓存，避免刚发布的新版本看不到
+uv tool install --upgrade --refresh mdymcp
 
 # uv tool 把可执行文件放在 `uv tool dir --bin`，把它加进本次会话的 PATH
 UV_TOOL_BIN="$(uv tool dir --bin 2>/dev/null || echo "$HOME/.local/bin")"
