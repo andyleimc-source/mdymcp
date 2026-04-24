@@ -157,6 +157,20 @@ def read_env(env_file: Path) -> dict[str, str]:
     return out
 
 
+def _clean_token(s: str) -> str:
+    quotes = ('"', "'", "“", "”", "‘", "’", "`")
+    prev = None
+    s = s.strip()
+    while s and s != prev:
+        prev = s
+        s = s.strip().rstrip(",;")
+        if s.startswith(quotes):
+            s = s[1:]
+        if s.endswith(quotes):
+            s = s[:-1]
+    return s
+
+
 def write_env(env_file: Path, updates: dict[str, str]) -> None:
     existing = read_env(env_file)
     existing.update(updates)
@@ -199,10 +213,10 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
 
     print()
     info("HAP 网关凭据（让你在 Claude Code 里直接用 48 个 HAP 工具）")
-    existing_rt = creds.get("MD_HAP_REFRESH_TOKEN", "")
-    existing_tk = creds.get("MD_HAP_TOKEN", "")
+    existing_rt = _clean_token(creds.get("MD_HAP_REFRESH_TOKEN", ""))
+    existing_tk = _clean_token(creds.get("MD_HAP_TOKEN", ""))
     if existing_rt and existing_tk:
-        ok(f".env 已存在 HAP 凭据（refresh…{existing_rt[-6:]} / token…{existing_tk[-6:]}）")
+        ok(f".env 已存在 HAP 凭据（token…{existing_tk[-6:]} / refresh…{existing_rt[-6:]}）")
         if not ask_yes("要重新填写吗？", default=False):
             out["MD_HAP_REFRESH_TOKEN"] = existing_rt
             out["MD_HAP_TOKEN"] = existing_tk
@@ -211,15 +225,15 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
             return out
 
     print(f"  • 即将打开 HAP 个人授权页：{HAP_INTEGRATION_URL}")
-    print("  • 授权后在页面拿到 refresh_token 和 access_token，粘回下面")
+    print("  • 授权后在页面拿到 access_token 和 refresh_token，粘回下面")
     print("  • 任一留空 = 跳过 HAP，仅启用 v1 协作 API 的 50 个工具")
     try:
         webbrowser.open(HAP_INTEGRATION_URL)
     except Exception:
         warn("浏览器没自动打开，请手动复制上面的 URL")
 
-    rt = input("MD_HAP_REFRESH_TOKEN: ").strip()
-    tk = input("MD_HAP_TOKEN: ").strip() if rt else ""
+    tk = _clean_token(input("MD_HAP_TOKEN (access_token): "))
+    rt = _clean_token(input("MD_HAP_REFRESH_TOKEN: ")) if tk else ""
     if rt and tk:
         write_env(env_file, {"MD_HAP_REFRESH_TOKEN": rt, "MD_HAP_TOKEN": tk})
         out["MD_HAP_REFRESH_TOKEN"] = rt
