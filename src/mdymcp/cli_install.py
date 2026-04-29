@@ -72,12 +72,41 @@ def _resolve_uvx() -> str | None:
     return None
 
 
+def _resolve_installed_mdymcp() -> str | None:
+    """找到 `uv tool install mdymcp` 装出来的 mdymcp 二进制绝对路径。
+
+    每次启动直接跑这个脚本，比 `uvx mdymcp` 少一层 uv 解析（~0.2s）。
+    """
+    found = shutil.which("mdymcp")
+    if found:
+        return found
+    exe = "mdymcp.exe" if sys.platform.startswith("win") else "mdymcp"
+    bin_dir = "Scripts" if sys.platform.startswith("win") else "bin"
+    candidates: list[Path] = [
+        Path.home() / ".local" / "bin" / exe,
+        Path.home() / ".local" / "share" / "uv" / "tools" / "mdymcp" / bin_dir / exe,
+    ]
+    if sys.platform.startswith("win"):
+        userprofile = Path(os.environ.get("USERPROFILE", str(Path.home())))
+        candidates += [
+            userprofile / ".local" / "bin" / exe,
+            userprofile / ".local" / "share" / "uv" / "tools" / "mdymcp" / bin_dir / exe,
+        ]
+    for c in candidates:
+        if c.exists():
+            return str(c)
+    return None
+
+
 def _build_server_command(py: Path) -> tuple[str, list[str]]:
     """MCP 客户端里配置的启动命令。
 
-    优先 uvx（跨平台、自带 Python 版本管理、不依赖 IDE 继承的 PATH）；
-    回落到当前解释器 + -m（兼容 pipx / clone 场景）。
+    优先直装的 mdymcp 二进制（install.sh 已经 `uv tool install mdymcp`，
+    直接跑省一层 uvx 解析）；回落 uvx；再回落当前解释器 + -m（兼容 clone 场景）。
     """
+    direct = _resolve_installed_mdymcp()
+    if direct:
+        return direct, []
     uvx = _resolve_uvx()
     if uvx:
         return uvx, ["mdymcp"]
