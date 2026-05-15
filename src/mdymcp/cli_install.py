@@ -326,10 +326,10 @@ def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
 
 
 def _build_env_block(creds: dict[str, str]) -> dict[str, str]:
-    env_block = {"MD_ACCOUNT_ID": creds["MD_ACCOUNT_ID"], "MD_KEY": creds["MD_KEY"]}
-    if creds.get("MD_HAP_KEY"):
-        env_block["MD_HAP_KEY"] = creds["MD_HAP_KEY"]
-    return env_block
+    # 故意留空：凭据只存在 ~/.mdymcp/.env，由 daemon 启动时读取。
+    # 写进客户端 mcp 配置的 env 会让 .mcp.json 里的旧值在 key 续期后顶死新 .env，
+    # 造成"明明 mdymcp-auth 跑了却还 10105"的隐性故障。
+    return {}
 
 
 def _register_claude_user(claude_bin: str, py: Path, env_block: dict[str, str]) -> bool:
