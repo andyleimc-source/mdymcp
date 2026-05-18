@@ -9,8 +9,10 @@ from . import auth
 
 
 def main() -> None:
+    target = Path.home() / ".mdymcp"
+    target.mkdir(parents=True, exist_ok=True)
     try:
-        auth.run_auth_flow(project_root=Path.cwd())
+        auth.run_auth_flow(project_root=target)
     except KeyboardInterrupt:
         print("\n已取消。", file=sys.stderr)
         sys.exit(130)
