@@ -15,7 +15,7 @@ powershell -c "irm https://raw.githubusercontent.com/andyleimc-source/mdymcp/mai
 脚本做三件事：
 1. 检测 `uv`，没装就从官方源装上（uv 会自己拉合适的 Python，你机器上是 3.14 / 3.9 还是没装都没关系）
 2. `uv tool install mdymcp`
-3. 启动 `mdymcp-install` 交互向导 —— 浏览器 OAuth 拿 v1 凭据 → 自动跳出 HAP 授权页拿 HAP token → 让你选范围（用户级/项目级/两个都要）+ 编号多选要注册的 IDE
+3. 启动 `mdymcp-install` 交互向导 —— 浏览器 OAuth 拿 v1 凭据 → 自动跳出 HAP 授权页拿 HAP token → 让你选范围（用户级/项目级/两个都要）+ 编号多选要注册的 IDE → 检测到 Claude Code 时自动安装 mdymcp skill（使用心智 + 故障 SOP）到 `~/.claude/skills/mdymcp/`
 
 配置写在 `~/.mdymcp/.env`（Windows: `%USERPROFILE%\.mdymcp\.env`），跨目录都能用。
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mdymcp"
-version = "0.2.7"
+version = "0.2.8"
 description = "Unified MCP server for Mingdao — v1 collaboration API + HAP gateway (worksheets, records, apps)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -43,3 +43,6 @@ mdymcp-uninstall = "mdymcp.cli_uninstall:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mdymcp = ["data/*.md"]

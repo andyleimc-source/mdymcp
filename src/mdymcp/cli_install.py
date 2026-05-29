@@ -209,7 +209,7 @@ def write_env(env_file: Path, updates: dict[str, str]) -> None:
 
 
 def step_credentials(py: Path, root: Path) -> dict[str, str]:
-    info("步骤 1/4：获取明道凭据（MD_ACCOUNT_ID / MD_KEY）")
+    info("步骤 1/5：获取明道凭据（MD_ACCOUNT_ID / MD_KEY）")
     env_file = root / ".env"
     existing = read_env(env_file)
     if existing.get("MD_ACCOUNT_ID") and existing.get("MD_KEY"):
@@ -283,7 +283,7 @@ def _stepwise_call(py: Path, env: dict, code: str) -> tuple[bool, str]:
 
 
 def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
-    info("步骤 2/4：验证凭据可用")
+    info("步骤 2/5：验证凭据可用")
     env = {**os.environ, **creds}
     env_file = root / ".env"
     out = dict(creds)
@@ -535,7 +535,7 @@ def _select_clients_interactive(detection: dict[str, bool]) -> set[str]:
 
 def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
                     client_override: set[str] | None, write_project_flag: bool) -> None:
-    info("步骤 3/4：注册到 MCP 客户端")
+    info("步骤 3/5：注册到 MCP 客户端")
     env_block = _build_env_block(creds)
 
     # 1) 选范围：用户级 / 项目级 / 两个都要
@@ -623,8 +623,45 @@ def step_mcp_config(py: Path, root: Path, creds: dict[str, str],
         print(f"\nclaude mcp add mdymcp --scope user {env_args} -- {server_cmd} {' '.join(server_args)}")
 
 
+CLAUDE_SKILL_DIR = Path.home() / ".claude" / "skills" / "mdymcp"
+
+
+def _packaged_skill_md() -> Path | None:
+    """定位包内 data/SKILL.md。PyPI/clone 装好后走 importlib.resources；
+    再回落到相对 __file__（极端情况下未安装为包）。"""
+    try:
+        from importlib.resources import files
+        p = files("mdymcp").joinpath("data", "SKILL.md")
+        if p.is_file():
+            return Path(str(p))
+    except Exception:
+        pass
+    fallback = Path(__file__).parent / "data" / "SKILL.md"
+    return fallback if fallback.exists() else None
+
+
+def step_skill() -> None:
+    """把 mdymcp 的使用 SOP skill copy 到 ~/.claude/skills/mdymcp/。
+    仅对 Claude Code 有意义；没装 Claude 就静默跳过。"""
+    info("步骤 4/5：安装 Claude Code skill（使用心智 + 故障 SOP）")
+    if not (Path.home() / ".claude").exists():
+        info("未检测到 ~/.claude，跳过 skill 安装（仅 Claude Code 需要）")
+        return
+    src = _packaged_skill_md()
+    if src is None:
+        warn("包内未找到 SKILL.md，跳过 skill 安装")
+        return
+    try:
+        CLAUDE_SKILL_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, CLAUDE_SKILL_DIR / "SKILL.md")
+        ok(f"skill 已安装到 {CLAUDE_SKILL_DIR / 'SKILL.md'}")
+        info("新会话生效：以后遇到 token 失效 / 600100 / 不知道走哪套凭证，Claude 会自动调用")
+    except Exception as e:
+        warn(f"skill 安装失败（不影响 MCP 使用）：{e}")
+
+
 def step_done() -> None:
-    info("步骤 4/4：完成")
+    info("步骤 5/5：完成")
     ok("mdymcp 安装完毕。重启客户端即可使用。")
     print("\n试试在 Claude Code 里说：")
     print("  · 「帮我看看最近的公司动态」")
@@ -659,6 +696,7 @@ def main() -> None:
         creds = step_credentials(py, root)
         creds = step_ping(py, root, creds)
         step_mcp_config(py, root, creds, client_override, write_project)
+        step_skill()
         step_done()
     except KeyboardInterrupt:
         print("\n已取消。")

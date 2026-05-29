@@ -1,0 +1,49 @@
+---
+name: mdymcp
+description: Andy 自研的明道统一 MCP（mdymcp）的使用心智与故障 SOP。当通过 mdymcp 工具查明道日程/动态/群组/成员/记录/应用/工作表/审批，或遇到 token 失效/600100/"token无效或过期"报错、`[HAP]`/`[v1]` 前缀错误、不知道某个 mdymcp 工具走哪套凭证时使用。
+---
+
+# mdymcp 使用指南
+
+Andy 自研包（`andyleimc-source/mdymcp`，PyPI）。**两套独立凭证**，分别供两组工具用——这是绝大多数困惑的根源。
+
+## 两套凭证心智模型
+
+| | v1 协作 API | HAP 网关 |
+|---|---|---|
+| 凭证 | `MD_KEY`（+`MD_ACCOUNT_ID`） | `MD_HAP_KEY`（源自 refresh_token+access_token） |
+| token 函数 | `ensure_access_token()` | `ensure_hap_token()` |
+| 稳定性 | 稳 | 易失效（hap_key 会过期） |
+| 覆盖工具 | 日程 `calendar_*`、组织 `company_*`、群组 `group_*`、动态 `post_*`、私信 `webchat_*`、用户 `user_*`/`find_member`(注：find_member 走 HAP)、消息 `message_*`、通行证 `passport_*` | 应用/工作表/记录/审批/角色：`get_app_list`、`get_worksheet_structure`、`get_record_list`、`create_record`、`update_record`、`find_member`、`find_department` 等 |
+
+判断某工具走哪套：**操作"低代码应用/工作表/记录/审批/成员"= HAP；操作"协作动态/日程/群组/私信"= v1。** 拿不准就看报错前缀（`[HAP]` / `[v1]`）。
+
+## 故障 SOP
+
+**报 `[HAP]` / 600100 / "token无效或过期"** = HAP 凭证问题。
+
+- **0.2.7+ 已自愈**：hap_key 失效时会自动用 `.env` 里的 refresh_token 重新 register 拿新 key 写回，无需干预，重试即可。
+- **若自愈仍失败**（错误说"refresh_token 已失效"或"缺 MD_HAP_xxx"）→ 一行修复：
+  ```
+  mdymcp-install
+  ```
+  （重新走 HAP 个人授权，拿新 refresh_token/access_token）
+
+**报 `[v1]`** = v1 凭证问题（`MD_KEY` 缺失/失效），同样 `mdymcp-install` 重配。
+
+**一行自查**（只打印 token 长度，不泄漏值，遵 `secrets-handling`）：
+```
+/Users/andy/.local/share/uv/tools/mdymcp/bin/python3 -c "from mdymcp.auth import ensure_access_token,ensure_hap_token as h; print('v1',len(ensure_access_token()),'hap',len(h()))"
+```
+两个都打出长度 = 两套都通。
+
+## 日历（`calendar_get_events`）约定
+
+- **数据基于日历订阅 feed，通常只到当天**——查未来日期基本返回空，不是 bug。
+- **看某人日程**：用 `organizer=` 参数（邮箱或姓名子串），例 `calendar_get_events(organizer="phil.ren")` 查任向晖。**不要**自己拉全量再 jq 过滤。
+- **不传日期**：默认 `[今天-30, 今天]`（0.2.7+），不会再拉全量 2600+ 条爆上下文。要更早的显式传 `start_date`。
+- 结果超 `limit`（默认 200）会按时间倒序截断并带 `truncated: true`。
+
+## 版本/发布
+
+源码 `~/code/mdymcp`（clone），改完 bump version → 发 PyPI → 三台 mac `uv tool upgrade mdymcp`（不动 `~/.mdymcp/.env`）。skill 走 dotfiles 同步（见 skill `mac-sync`）。
