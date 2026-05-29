@@ -80,7 +80,7 @@ def ensure_access_token() -> str:
     hook_url = os.getenv("MD_HOOK_URL", HOOK_URL_DEFAULT).strip()
     if not account_id or not key:
         raise RuntimeError(
-            "Missing MD_ACCOUNT_ID or MD_KEY. Set them in .env or environment."
+            "[v1] Missing MD_ACCOUNT_ID or MD_KEY. Set them in .env or environment."
         )
 
     body = json.dumps({"account_id": account_id, "key": key}).encode("utf-8")
@@ -99,7 +99,7 @@ def ensure_access_token() -> str:
 
     token = data.get("token")
     if not token:
-        raise RuntimeError(f"Token endpoint returned no token: {data!r}")
+        raise RuntimeError(f"[v1] Token endpoint returned no token: {data!r}")
 
     _cache["token"] = token
     _cache["expires_at"] = _next_local_midnight_ts()
@@ -122,11 +122,65 @@ def _hap_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def ensure_hap_token() -> str:
-    """HAP 网关 token：用 install 时存下来的 hap_key 调 token hook，缓存到次日本地 00:00。
+def _active_env_path() -> Path:
+    """返回当前生效的 .env 路径（与 _load_env 同序，取第一个存在的）。
 
-    register 是一次性配置（install.py 完成后服务端已绑定 refresh_token + token →
-    hap_key）；运行时只查询，不再 register。
+    都不存在则回落到 ~/.mdymcp/.env（install 的默认写入位置），保证自愈能落盘。
+    """
+    for d in [Path.cwd(), MDYMCP_USER_HOME, MDYMCP_USER_HOME_LEGACY,
+              Path(__file__).resolve().parent.parent.parent]:
+        env = d / ".env"
+        if env.exists():
+            return env
+    return MDYMCP_USER_HOME / ".env"
+
+
+def _hap_self_heal() -> str:
+    """hap_key 失效/缺失时的自愈：用 .env 里的 refresh_token + hap_token 重新 register，
+    拿新 hap_key 写回 .env，再换 token 返回。
+
+    install.py 的 step_ping 在安装时做的就是这件事——这里把它搬到运行时自动执行，
+    省掉"重跑 install.py"的人工步骤。失败时抛分级错误，明确指向缺哪个凭据。
+    单次执行，不递归调用 ensure_hap_token，避免死循环。
+    """
+    account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
+    refresh_token = os.getenv("MD_HAP_REFRESH_TOKEN", "").strip()
+    hap_token = os.getenv("MD_HAP_TOKEN", "").strip()
+    if not refresh_token or not hap_token:
+        missing = "MD_HAP_REFRESH_TOKEN" if not refresh_token else "MD_HAP_TOKEN"
+        raise RuntimeError(
+            f"[HAP] hap_key 失效且无法自愈：缺 {missing}。请运行 mdymcp-install 重新授权。"
+        )
+
+    try:
+        new_hap_key = hap_register(account_id, refresh_token, hap_token)
+    except Exception as e:
+        raise RuntimeError(
+            f"[HAP] 自愈失败（refresh_token 可能已失效）：{e}。请运行 mdymcp-install 重新授权。"
+        ) from e
+
+    # 写回 .env + 覆盖进程内环境（_load_env 用 setdefault，必须手动覆盖旧值）
+    try:
+        _write_env_vars(_active_env_path(), {"MD_HAP_KEY": new_hap_key})
+    except Exception:
+        pass  # 落盘失败不致命，本次进程内仍可用
+    os.environ["MD_HAP_KEY"] = new_hap_key
+
+    token_url = os.getenv("MD_HAP_TOKEN_HOOK", HAP_TOKEN_HOOK_DEFAULT).strip()
+    tok = _hap_post(token_url, {"account_id": account_id, "hap_key": new_hap_key})
+    token = tok.get("token") or ""
+    if not token:
+        raise RuntimeError(
+            f"[HAP] 自愈后仍拿不到 token，请运行 mdymcp-install 重新授权。响应：{tok!r}"
+        )
+    return token
+
+
+def ensure_hap_token() -> str:
+    """HAP 网关 token：用 hap_key 调 token hook，缓存到次日本地 00:00。
+
+    hap_key 缺失或失效时自动 self-heal（用 .env 里的 refresh_token 重新 register），
+    无需人工重跑 install。
     """
     if _hap_cache["token"] and time.time() < _hap_cache["expires_at"] - 60:
         return str(_hap_cache["token"])
@@ -135,17 +189,18 @@ def ensure_hap_token() -> str:
     account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
     hap_key = os.getenv("MD_HAP_KEY", "").strip()
     token_url = os.getenv("MD_HAP_TOKEN_HOOK", HAP_TOKEN_HOOK_DEFAULT).strip()
-    if not account_id or not hap_key:
-        raise RuntimeError(
-            "Missing MD_ACCOUNT_ID or MD_HAP_KEY。请重跑 install.py 完成 HAP 注册。"
-        )
+    if not account_id:
+        raise RuntimeError("[HAP] Missing MD_ACCOUNT_ID。请运行 mdymcp-install。")
 
-    tok = _hap_post(token_url, {"account_id": account_id, "hap_key": hap_key})
-    token = tok.get("token") or ""
+    token = ""
+    if hap_key:
+        tok = _hap_post(token_url, {"account_id": account_id, "hap_key": hap_key})
+        token = tok.get("token") or ""
+
+    # hap_key 缺失或失效（token 为空）→ 自愈
     if not token:
-        raise RuntimeError(
-            f"HAP token 接口返回空，hap_key 可能已失效，请重跑 install.py。响应：{tok!r}"
-        )
+        token = _hap_self_heal()
+        hap_key = os.getenv("MD_HAP_KEY", "").strip()
 
     _hap_cache["hap_key"] = hap_key
     _hap_cache["token"] = token

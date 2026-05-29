@@ -108,12 +108,26 @@ def register(mcp: FastMCP) -> None:
     def calendar_get_events(
         start_date: str | None = None,
         end_date: str | None = None,
+        organizer: str | None = None,
+        keyword: str | None = None,
+        limit: int = 200,
     ) -> dict:
         """获取日程列表。通过日历订阅接口拉取 iCal 数据并解析。
 
-        日期格式 YYYY-MM-DD，用于过滤日程范围（北京时间）。
-        不传日期则返回所有日程。
+        日期格式 YYYY-MM-DD（北京时间）。
+        - 不传日期：默认取 [今天-30, 今天]（订阅 feed 通常只到当天，查未来多为空）。
+          全量约 2600+ 条会撑爆上下文，故有默认范围，需更早请显式传 start_date。
+        - organizer：按组织者过滤（邮箱或姓名子串，大小写不敏感）。看某人日程用这个，
+          例：organizer="phil.ren" 查任向晖。
+        - keyword：按标题(summary)子串过滤。
+        - limit：最多返回条数（默认 200），超出按时间倒序截断并标记 truncated。
         """
+        # 默认日期范围：feed 不含未来，偏向最近 30 天
+        if not start_date and not end_date:
+            today = datetime.now(_CST)
+            start_date = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+            end_date = today.strftime("%Y-%m-%d")
+
         # Step 1: get subscription URL
         resp = api_get("/v1/calendar/get_calendar_subscription_url")
         if not resp.get("success"):
@@ -130,7 +144,30 @@ def register(mcp: FastMCP) -> None:
 
         # Step 3: parse & filter
         events = _parse_ical_events(ical_text, start_date, end_date)
-        return {"data": events, "count": len(events), "success": True, "error_code": 1}
+
+        # organizer / keyword 过滤（子串、大小写不敏感）
+        if organizer:
+            o = organizer.lower()
+            events = [e for e in events if o in (e.get("organizer") or "").lower()]
+        if keyword:
+            k = keyword.lower()
+            events = [e for e in events if k in (e.get("summary") or "").lower()]
+
+        # 上限保护：超出按时间倒序保留最近的 limit 条
+        total = len(events)
+        truncated = total > limit
+        if truncated:
+            events = sorted(events, key=lambda e: e["start_time"], reverse=True)[:limit]
+            events.sort(key=lambda e: e["start_time"])
+
+        result = {"data": events, "count": len(events),
+                  "success": True, "error_code": 1}
+        if truncated:
+            result["truncated"] = True
+            result["total_before_truncate"] = total
+            result["hint"] = (f"匹配 {total} 条，已截断到最近 {limit} 条。"
+                              "请缩小日期范围或加 organizer/keyword 过滤。")
+        return result
 
     @mcp.tool()
     def calendar_get_event_details(event_id: str) -> dict:
