@@ -35,12 +35,10 @@ APP_KEY_DEFAULT = "6A228C49DAC4"
 CALLBACK_PORT_DEFAULT = 8080
 REGISTER_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks/NjllNjFkYjM2NTAyMDc5NzgxMGNmZDll"
 
-# HAP 网关凭据（独立于 v1 token）：refresh_token → register → hap_key → token
-HAP_REGISTER_HOOK_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjllNjNkYzNiODBlZTc3YjE3NDM1Y2U2"
-HAP_TOKEN_HOOK_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjllNjQ2NGE2NTAyMDc5NzgxMTFjM2Q3"
+# HAP 网关凭据（独立于 v1 token）：用户在 https://www.mingdao.com/personal?type=pat
+# 自助生成的个人 PAT（pat_xxx），本身就是 Bearer token，无需任何远端交换。
 
 _cache: dict[str, Any] = {"token": "", "expires_at": 0}
-_hap_cache: dict[str, Any] = {"hap_key": "", "token": "", "expires_at": 0}
 
 
 MDYMCP_USER_HOME = Path.home() / ".mdymcp"
@@ -106,121 +104,21 @@ def ensure_access_token() -> str:
     return str(token)
 
 
-def _hap_post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "mdymcp/0.2",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _active_env_path() -> Path:
-    """返回当前生效的 .env 路径（与 _load_env 同序，取第一个存在的）。
-
-    都不存在则回落到 ~/.mdymcp/.env（install 的默认写入位置），保证自愈能落盘。
-    """
-    for d in [Path.cwd(), MDYMCP_USER_HOME, MDYMCP_USER_HOME_LEGACY,
-              Path(__file__).resolve().parent.parent.parent]:
-        env = d / ".env"
-        if env.exists():
-            return env
-    return MDYMCP_USER_HOME / ".env"
-
-
-def _hap_self_heal() -> str:
-    """hap_key 失效/缺失时的自愈：用 .env 里的 refresh_token + hap_token 重新 register，
-    拿新 hap_key 写回 .env，再换 token 返回。
-
-    install.py 的 step_ping 在安装时做的就是这件事——这里把它搬到运行时自动执行，
-    省掉"重跑 install.py"的人工步骤。失败时抛分级错误，明确指向缺哪个凭据。
-    单次执行，不递归调用 ensure_hap_token，避免死循环。
-    """
-    account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
-    refresh_token = os.getenv("MD_HAP_REFRESH_TOKEN", "").strip()
-    hap_token = os.getenv("MD_HAP_TOKEN", "").strip()
-    if not refresh_token or not hap_token:
-        missing = "MD_HAP_REFRESH_TOKEN" if not refresh_token else "MD_HAP_TOKEN"
-        raise RuntimeError(
-            f"[HAP] hap_key 失效且无法自愈：缺 {missing}。请运行 mdymcp-install 重新授权。"
-        )
-
-    try:
-        new_hap_key = hap_register(account_id, refresh_token, hap_token)
-    except Exception as e:
-        raise RuntimeError(
-            f"[HAP] 自愈失败（refresh_token 可能已失效）：{e}。请运行 mdymcp-install 重新授权。"
-        ) from e
-
-    # 写回 .env + 覆盖进程内环境（_load_env 用 setdefault，必须手动覆盖旧值）
-    try:
-        _write_env_vars(_active_env_path(), {"MD_HAP_KEY": new_hap_key})
-    except Exception:
-        pass  # 落盘失败不致命，本次进程内仍可用
-    os.environ["MD_HAP_KEY"] = new_hap_key
-
-    token_url = os.getenv("MD_HAP_TOKEN_HOOK", HAP_TOKEN_HOOK_DEFAULT).strip()
-    tok = _hap_post(token_url, {"account_id": account_id, "hap_key": new_hap_key})
-    token = tok.get("token") or ""
-    if not token:
-        raise RuntimeError(
-            f"[HAP] 自愈后仍拿不到 token，请运行 mdymcp-install 重新授权。响应：{tok!r}"
-        )
-    return token
-
-
 def ensure_hap_token() -> str:
-    """HAP 网关 token：用 hap_key 调 token hook，缓存到次日本地 00:00。
+    """HAP 网关 token —— 直接用 .env 里的 PAT（pat_xxx），无需任何远端交换。
 
-    hap_key 缺失或失效时自动 self-heal（用 .env 里的 refresh_token 重新 register），
-    无需人工重跑 install。
+    PAT 由用户在 https://www.mingdao.com/personal?type=pat 自助生成，本身即 Bearer token，
+    长期有效、自管。缺失时抛错指向生成页。
     """
-    if _hap_cache["token"] and time.time() < _hap_cache["expires_at"] - 60:
-        return str(_hap_cache["token"])
-
     _load_env()
-    account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
-    hap_key = os.getenv("MD_HAP_KEY", "").strip()
-    token_url = os.getenv("MD_HAP_TOKEN_HOOK", HAP_TOKEN_HOOK_DEFAULT).strip()
-    if not account_id:
-        raise RuntimeError("[HAP] Missing MD_ACCOUNT_ID。请运行 mdymcp-install。")
-
-    token = ""
-    if hap_key:
-        tok = _hap_post(token_url, {"account_id": account_id, "hap_key": hap_key})
-        token = tok.get("token") or ""
-
-    # hap_key 缺失或失效（token 为空）→ 自愈
-    if not token:
-        token = _hap_self_heal()
-        hap_key = os.getenv("MD_HAP_KEY", "").strip()
-
-    _hap_cache["hap_key"] = hap_key
-    _hap_cache["token"] = token
-    _hap_cache["expires_at"] = _next_local_midnight_ts()
-    return token
-
-
-def hap_register(account_id: str, refresh_token: str, hap_token: str) -> str:
-    """一次性注册 HAP 凭据到服务端，返回 hap_key（由 install.py 调用并持久化到 .env）。"""
-    _load_env()
-    url = os.getenv("MD_HAP_REGISTER_HOOK", HAP_REGISTER_HOOK_DEFAULT).strip()
-    reg = _hap_post(url, {
-        "account_id": account_id,
-        "hap_refresh_token": refresh_token,
-        "hap_token": hap_token,
-    })
-    hap_key = reg.get("hap_key") or ""
-    if not hap_key:
-        raise RuntimeError(f"HAP register 未返回 hap_key：{reg!r}")
-    return hap_key
+    pat = os.getenv("MD_HAP_PAT", "").strip()
+    if not pat:
+        raise RuntimeError(
+            "[HAP] 缺 MD_HAP_PAT。请运行 mdymcp-install 填入 HAP PAT，"
+            "或在 .env 设 MD_HAP_PAT=pat_xxx"
+            "（在 https://www.mingdao.com/personal?type=pat 生成）。"
+        )
+    return pat
 
 
 # ─────────────────────────────────────────────

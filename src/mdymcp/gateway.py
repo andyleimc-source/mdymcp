@@ -2,7 +2,8 @@
 
 启动时对远端 `/mcp` 发 `initialize` + `tools/list` 拿到工具 schema；
 之后把 `call_tool` 直接透传到远端，支持 application/json 和 text/event-stream
-两种响应格式。Token 使用 `auth.ensure_hap_token()`（独立的 HAP 授权链），401 会自动重拉一次重试。
+两种响应格式。Token 使用 `auth.ensure_hap_token()`，即用户在 .env 配置的 HAP PAT（pat_xxx）；
+PAT 失效时直接报错指向重新生成，不做无意义的刷新重试（静态 PAT 重取还是同一个值）。
 """
 
 from __future__ import annotations
@@ -81,13 +82,12 @@ class HapGateway:
             resp = self._post(token, body)
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                # token 可能失效，强制重新拉一次
-                from . import auth as _auth
-                _auth._hap_cache["token"] = ""  # type: ignore[index]
-                token = ensure_hap_token()
-                resp = self._post(token, body)
-            else:
-                raise GatewayError(f"HAP gateway HTTP {e.code}: {e.reason}") from e
+                raise GatewayError(
+                    "[HAP] PAT 无效或已过期（401）。请去 "
+                    "https://www.mingdao.com/personal?type=pat 重新生成，"
+                    "并更新 .env 的 MD_HAP_PAT（或重跑 mdymcp-install）。"
+                ) from e
+            raise GatewayError(f"HAP gateway HTTP {e.code}: {e.reason}") from e
 
         if "error" in resp:
             err = resp["error"]
@@ -122,10 +122,10 @@ class HapGateway:
         params = {"name": name, "arguments": arguments or {}}
         result = self._rpc("tools/call", params)
         if self._looks_like_token_invalid(result):
-            log.info("HAP 工具 %s 返回 token 失效，刷新后重试一次", name)
-            from . import auth as _auth
-            _auth._hap_cache["token"] = ""  # type: ignore[index]
-            result = self._rpc("tools/call", params)
+            raise GatewayError(
+                "[HAP] PAT 已失效。请去 https://www.mingdao.com/personal?type=pat "
+                "重新生成，并更新 .env 的 MD_HAP_PAT（或重跑 mdymcp-install）。"
+            )
         return result
 
     @classmethod

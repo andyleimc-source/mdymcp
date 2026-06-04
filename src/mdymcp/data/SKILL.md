@@ -11,25 +11,22 @@ Andy 自研包（`andyleimc-source/mdymcp`，PyPI）。**两套独立凭证**，
 
 | | v1 协作 API | HAP 网关 |
 |---|---|---|
-| 凭证 | `MD_KEY`（+`MD_ACCOUNT_ID`） | `MD_HAP_KEY`（源自 refresh_token+access_token） |
-| token 函数 | `ensure_access_token()` | `ensure_hap_token()` |
-| 稳定性 | 稳 | 易失效（hap_key 会过期） |
+| 凭证 | `MD_KEY`（+`MD_ACCOUNT_ID`） | `MD_HAP_PAT`（个人 PAT，pat_ 开头，自助生成） |
+| token 函数 | `ensure_access_token()` | `ensure_hap_token()`（直接返回 PAT，无网络） |
+| 稳定性 | 稳 | 稳（PAT 长期有效、用户自管） |
 | 覆盖工具 | 日程 `calendar_*`、组织 `company_*`、群组 `group_*`、动态 `post_*`、私信 `webchat_*`、用户 `user_*`/`find_member`(注：find_member 走 HAP)、消息 `message_*`、通行证 `passport_*` | 应用/工作表/记录/审批/角色：`get_app_list`、`get_worksheet_structure`、`get_record_list`、`create_record`、`update_record`、`find_member`、`find_department` 等 |
 
 判断某工具走哪套：**操作"低代码应用/工作表/记录/审批/成员"= HAP；操作"协作动态/日程/群组/私信"= v1。** 拿不准就看报错前缀（`[HAP]` / `[v1]`）。
 
 ## 故障 SOP
 
-**报 `[HAP]` / 600100 / "token无效或过期"** = HAP 凭证问题。
+**报 `[HAP]` / 600100 / "token无效或过期" / "PAT 已失效"** = HAP 的 `MD_HAP_PAT` 失效或缺失。
 
-- **0.2.7+ 已自愈**：hap_key 失效时会自动用 `.env` 里的 refresh_token 重新 register 拿新 key 写回，无需干预，重试即可。
-- **若自愈仍失败**（错误说"refresh_token 已失效"或"缺 MD_HAP_xxx"）→ 一行修复：
-  ```
-  mdymcp-install
-  ```
-  （重新走 HAP 个人授权，拿新 refresh_token/access_token）
+- 去 **https://www.mingdao.com/personal?type=pat** 重新生成 PAT（已登录直接生成；未登录先登录会自动跳回）。
+- 把新 `pat_xxx` 更新到 `.env` 的 `MD_HAP_PAT`，或重跑 `mdymcp-install`。
+- 不再有"自愈/register"——PAT 由用户自管，没有自动续期这一步。
 
-**报 `[v1]`** = v1 凭证问题（`MD_KEY` 缺失/失效），同样 `mdymcp-install` 重配。
+**报 `[v1]`** = v1 凭证问题（`MD_KEY` 缺失/失效），`mdymcp-install` 重配。
 
 **一行自查**（只打印 token 长度，不泄漏值，遵 `secrets-handling`）：
 ```

@@ -48,8 +48,8 @@ def _vscode_project_config(root: Path) -> Path:
 DEBUG = os.getenv("MDYMCP_INSTALL_DEBUG", "").strip() in ("1", "true", "yes") \
         or "--debug" in sys.argv
 
-# HAP 个人授权页 —— 拿 refresh_token / access_token 的地方
-HAP_INTEGRATION_URL = "https://www.mingdao.com/integrationConnect/69bcae07257900ec41aa2733"
+# HAP 个人 PAT 生成/管理页 —— 用户在这里自助生成 pat_xxx
+HAP_PAT_URL = "https://www.mingdao.com/personal?type=pat"
 
 
 def _resolve_uvx() -> str | None:
@@ -215,9 +215,7 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     if existing.get("MD_ACCOUNT_ID") and existing.get("MD_KEY"):
         ok(f".env 已存在凭据：MD_ACCOUNT_ID={existing['MD_ACCOUNT_ID']}")
         if not ask_yes("要重新获取吗？", default=False):
-            return {k: existing[k] for k in ("MD_ACCOUNT_ID", "MD_KEY",
-                                              "MD_HAP_REFRESH_TOKEN", "MD_HAP_TOKEN",
-                                              "MD_HAP_KEY")
+            return {k: existing[k] for k in ("MD_ACCOUNT_ID", "MD_KEY", "MD_HAP_PAT")
                     if k in existing}
 
     info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
@@ -241,35 +239,29 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     out = {"MD_ACCOUNT_ID": creds["MD_ACCOUNT_ID"], "MD_KEY": creds["MD_KEY"]}
 
     print()
-    info("HAP 网关凭据（让你在 Claude Code 里直接用 48 个 HAP 工具）")
-    existing_rt = _clean_token(creds.get("MD_HAP_REFRESH_TOKEN", ""))
-    existing_tk = _clean_token(creds.get("MD_HAP_TOKEN", ""))
-    if existing_rt and existing_tk:
-        ok(f".env 已存在 HAP 凭据（token…{existing_tk[-6:]} / refresh…{existing_rt[-6:]}）")
+    info("HAP 网关 PAT（让你在 Claude Code 里直接用 HAP 工具：应用/工作表/记录/审批）")
+    existing_pat = _clean_token(creds.get("MD_HAP_PAT", ""))
+    if existing_pat:
+        ok(f".env 已存在 HAP PAT（…{existing_pat[-6:]}）")
         if not ask_yes("要重新填写吗？", default=False):
-            out["MD_HAP_REFRESH_TOKEN"] = existing_rt
-            out["MD_HAP_TOKEN"] = existing_tk
-            if creds.get("MD_HAP_KEY"):
-                out["MD_HAP_KEY"] = creds["MD_HAP_KEY"]
+            out["MD_HAP_PAT"] = existing_pat
             return out
 
-    print(f"  • 即将打开 HAP 个人授权页：{HAP_INTEGRATION_URL}")
-    print("  • 授权后在页面拿到 access_token 和 refresh_token，粘回下面")
-    print("  • 任一留空 = 跳过 HAP，仅启用 v1 协作 API 的 50 个工具")
+    print(f"  • 即将打开 HAP 个人 PAT 页：{HAP_PAT_URL}")
+    print("  • 已登录 → 直接在页面生成/管理 PAT；未登录 → 先登录会自动跳回该页")
+    print("  • 复制 pat_xxx 粘到下面；留空 = 跳过 HAP，仅启用 v1 协作 API 工具")
     try:
-        webbrowser.open(HAP_INTEGRATION_URL)
+        webbrowser.open(HAP_PAT_URL)
     except Exception:
         warn("浏览器没自动打开，请手动复制上面的 URL")
 
-    tk = _clean_token(input("MD_HAP_TOKEN (access_token): "))
-    rt = _clean_token(input("MD_HAP_REFRESH_TOKEN: ")) if tk else ""
-    if rt and tk:
-        write_env(env_file, {"MD_HAP_REFRESH_TOKEN": rt, "MD_HAP_TOKEN": tk})
-        out["MD_HAP_REFRESH_TOKEN"] = rt
-        out["MD_HAP_TOKEN"] = tk
+    pat = _clean_token(input("MD_HAP_PAT (pat_xxx): "))
+    if pat:
+        write_env(env_file, {"MD_HAP_PAT": pat})
+        out["MD_HAP_PAT"] = pat
         ok("已写入 .env")
     else:
-        warn("HAP 凭据不完整，跳过 HAP 网关；v1 工具不受影响")
+        warn("未填 PAT，跳过 HAP 网关；v1 工具不受影响")
     return out
 
 
@@ -294,34 +286,18 @@ def step_ping(py: Path, root: Path, creds: dict[str, str]) -> dict[str, str]:
         err(f"v1 token 换取失败：{output.strip()}"); sys.exit(1)
     ok("v1 凭据有效")
 
-    if not creds.get("MD_HAP_REFRESH_TOKEN") or not creds.get("MD_HAP_TOKEN"):
-        warn("未填 HAP 凭据，跳过 HAP 网关；仅启用 50 个 v1 工具")
+    if not creds.get("MD_HAP_PAT"):
+        warn("未填 HAP PAT，跳过 HAP 网关；仅启用 v1 协作 API 工具")
         return out
 
-    if creds.get("MD_HAP_KEY"):
-        info(f"复用已有 hap_key (…{creds['MD_HAP_KEY'][-6:]})")
-    else:
-        reg_code = (
-            "from mdymcp.auth import hap_register;"
-            "import os;"
-            "print(hap_register(os.environ['MD_ACCOUNT_ID'], os.environ['MD_HAP_REFRESH_TOKEN'], os.environ['MD_HAP_TOKEN']))"
-        )
-        success, output = _stepwise_call(py, env, reg_code)
-        hap_key = output.strip().splitlines()[-1] if success and output.strip() else ""
-        if not hap_key:
-            warn(f"HAP register 失败，HAP 工具将跳过；v1 不受影响 ({output.strip()[-120:]})")
-            return out
-        write_env(env_file, {"MD_HAP_KEY": hap_key})
-        out["MD_HAP_KEY"] = hap_key
-        env["MD_HAP_KEY"] = hap_key
-        ok("HAP 已注册（hap_key 写入 .env）")
-
+    # 用 PAT 实际拉一次远端 tools/list 验证可用
     success, output = _stepwise_call(py, env,
-        "from mdymcp.auth import ensure_hap_token; print(len(ensure_hap_token()))")
-    if success:
-        ok("HAP 凭据有效（48 个 HAP 工具可用）")
+        "from mdymcp.gateway import HapGateway; print(len(HapGateway().list_tools()))")
+    count = output.strip().splitlines()[-1] if success and output.strip() else "0"
+    if success and count.isdigit() and int(count) > 0:
+        ok(f"HAP PAT 有效（{count} 个 HAP 网关工具可用）")
     else:
-        warn(f"HAP token 验证失败：{output.strip()[-160:]}")
+        warn(f"HAP PAT 验证失败，HAP 工具将跳过；v1 不受影响 ({output.strip()[-160:]})")
     return out
 
 

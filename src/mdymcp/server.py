@@ -29,8 +29,8 @@ mcp = FastMCP(
     "mdymcp",
     instructions=(
         "明道统一 MCP：v1 协作 API（动态/日程/群组/用户/组织/私信/收件箱/账户）+ "
-        "HAP 网关（应用/工作表/记录/审批/角色）。无需 OAuth 授权，仅需 .env 配置 "
-        "MD_ACCOUNT_ID 与 MD_KEY，token 由服务端每日自动刷新。"
+        "HAP 网关（应用/工作表/记录/审批/角色）。.env 配置 MD_ACCOUNT_ID + MD_KEY（v1）"
+        "与 MD_HAP_PAT（HAP 个人 PAT，pat_xxx）；v1 token 每日自动刷新，HAP 直接用 PAT。"
     ),
 )
 

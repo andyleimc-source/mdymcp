@@ -52,37 +52,16 @@ HAP 工具由远端网关动态提供；具体参数 schema 以启动时 `tools/
 
 ---
 
-## 怎么拿 HAP 的 refresh_token 和 access_token
+## 怎么拿 HAP 的 PAT
 
-> `mdymcp-install` 走到 HAP 步骤时会**自动开浏览器**到授权页，你按下面截图复制粘贴即可，**此段是备份参考**。
+> `mdymcp-install` 走到 HAP 步骤时会**自动开浏览器**到 PAT 页，复制粘贴即可。
 
-授权页：<https://www.mingdao.com/integrationConnect/69bcae07257900ec41aa2733>
+PAT 页：<https://www.mingdao.com/personal?type=pat>
 
-### 第 1 步：集成中心 → API 库 → HAP API（个人授权）→ 立即授权
+- **已登录** → 直接在页面生成/管理个人 PAT（`pat_` 开头）。
+- **未登录** → 先登录，会自动跳回该页。
 
-![step1](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step1-authorize.png)
-
-### 第 2 步：「我的连接 → 授权」tab，找到刚授权的连接
-
-![step2](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step2-connections.png)
-
-### 第 3 步：进入连接，在账户行点 `...` → 查看日志
-
-![step3](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step3-account-menu.png)
-
-### 第 4 步：在日志列表中找一条「获取 token」→ 点查看详情
-
-![step4](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step4-log-list.png)
-
-### 第 5 步：在「返回值」标签里复制 `access_token` 和 `refresh_token`
-
-![step5](https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/docs/images/hap-step5-tokens.png)
-
-在向导提示时分别粘到：
-- `MD_HAP_TOKEN:` ← 粘 `access_token`
-- `MD_HAP_REFRESH_TOKEN:` ← 粘 `refresh_token`
-
-> 这两个 token 只在装机时用一次（把你的账号绑定到服务端，换出长期 `hap_key`）。绑定完成后运行时只用 `hap_key` + `account_id`，不再需要它们。
+复制 `pat_xxx`，在向导提示 `MD_HAP_PAT:` 时粘进去即可。PAT 本身就是 Bearer token，长期有效、你自己可随时吊销重发，无需服务端交换。留空 = 跳过 HAP，只用 v1 工具。
 
 ---
 
@@ -105,11 +84,11 @@ HAP 工具由远端网关动态提供；具体参数 schema 以启动时 `tools/
 
 | | v1 access_token | HAP token |
 |---|---|---|
-| install 时 | OAuth → `MD_KEY` 写入 `.env` | register（一次性）→ `MD_HAP_KEY` 写入 `.env` |
-| 运行时 | 1 次请求：v1 token hook | 1 次请求：HAP token hook |
-| 缓存 TTL | 到本地次日 00:00 | 到本地次日 00:00 |
+| install 时 | OAuth → `MD_KEY` 写入 `.env` | 粘 PAT → `MD_HAP_PAT` 写入 `.env` |
+| 运行时 | 1 次请求：v1 token hook | 直接用 `MD_HAP_PAT`，无远端交换 |
+| 缓存 TTL | 到本地次日 00:00 | 不需要（PAT 即 token） |
 
-每天首次调用时拉一次 token、缓存到本地次日 00:00；不持久化到磁盘。HAP 网关握手失败时**不崩 server**，仅跳过远端工具注册，v1 工具仍可用。
+v1 每天首次调用拉一次 token、缓存到本地次日 00:00、不持久化。HAP 直接用 `.env` 里的 PAT 当 Bearer token。HAP 网关握手失败时**不崩 server**，仅跳过远端工具注册，v1 工具仍可用。
 
 ---
 
@@ -122,15 +101,11 @@ HAP 工具由远端网关动态提供；具体参数 schema 以启动时 `tools/
 MD_ACCOUNT_ID=你的明道账号 UUID
 MD_KEY=你的接入 key
 
-# HAP 网关（mdymcp-install 自动写入）
-MD_HAP_REFRESH_TOKEN=  # install 时粘贴
-MD_HAP_TOKEN=          # install 时粘贴
-MD_HAP_KEY=            # mdymcp-install 自动写入
+# HAP 网关 PAT（在 https://www.mingdao.com/personal?type=pat 生成，pat_ 开头）
+MD_HAP_PAT=  # install 时粘贴；留空 = 跳过 HAP
 
 # 可选（通常不用动）
 # MD_HOOK_URL=<自部署 v1 token hook>
-# MD_HAP_REGISTER_HOOK=<自部署 HAP register hook>
-# MD_HAP_TOKEN_HOOK=<自部署 HAP token hook>
 # MD_APP_KEY=<自定义 OAuth app_key>
 # MD_REGISTER_URL=<自定义 v1 OAuth 注册 hook>
 # MD_CALLBACK_PORT=8080
@@ -146,9 +121,8 @@ MD_HAP_KEY=            # mdymcp-install 自动写入
 | curl / irm 拉 astral.sh 失败 | 走代理；或从 <https://github.com/astral-sh/uv/releases> 下载 tarball 手动解压到 `~/.local/bin/` |
 | Windows 下 `irm \| iex` 报执行策略错误 | 管理员 PowerShell：`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | `Missing MD_ACCOUNT_ID or MD_KEY` | 重跑 `mdymcp-install` |
-| `Missing MD_ACCOUNT_ID or MD_HAP_KEY` | 重跑 `mdymcp-install` 走 HAP 步骤 |
+| `缺 MD_HAP_PAT` / `PAT 无效或已过期` | 去 <https://www.mingdao.com/personal?type=pat> 重新生成 PAT，更新 `.env` 的 `MD_HAP_PAT` 或重跑 `mdymcp-install` |
 | IDE 里看不到 mdymcp | 重启 IDE；或在 IDE 的 MCP 设置里点 Refresh。GUI 启动找不到 `uvx` 时改从终端启动 IDE（默认写绝对路径应该已规避这个） |
-| `HAP token 接口返回空` | hap_key 在服务端失效，重新拿一对 token 并重跑 `mdymcp-install` |
 | 启动显示 `HAP 网关工具 0 个` | `/mcp` 握手失败（多半是网络）；v1 工具不受影响 |
 | HAP 工具返回 `Http Headers verification failed` | HAP 后端既有问题（Node 版也有），非 mdymcp bug |
 
