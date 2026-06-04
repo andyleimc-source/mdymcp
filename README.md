@@ -1,5 +1,20 @@
 # mdymcp
 
+> ## ⬆️ 已装过的用户升级（0.3.0，重要）
+>
+> 0.3.0 起 **HAP 改用个人 PAT**，不再走旧的 `refresh_token / hap_key` 那套。两步搞定：
+>
+> **1) 升级程序**
+> ```bash
+> uv tool upgrade mdymcp
+> ```
+>
+> **2) 换 HAP 凭据**：去 <https://www.mingdao.com/personal?type=pat> 生成一个 PAT（`pat_` 开头），然后任选其一：
+> - **省事**：直接重跑 `mdymcp-install`，走到 HAP 步骤粘进去即可；
+> - **手动**：编辑 `~/.mdymcp/.env`，**删掉** `MD_HAP_KEY` / `MD_HAP_REFRESH_TOKEN` / `MD_HAP_TOKEN`，**加上** `MD_HAP_PAT=pat_xxx`。
+>
+> 改完重启 IDE。只用 v1 工具、没配过 HAP 的用户：`uv tool upgrade mdymcp` 即可，无需改动。
+
 ## 一键安装
 
 **macOS / Linux**
@@ -15,7 +30,7 @@ powershell -c "irm https://raw.githubusercontent.com/andyleimc-source/mdymcp/mai
 脚本做三件事：
 1. 检测 `uv`，没装就从官方源装上（uv 会自己拉合适的 Python，你机器上是 3.14 / 3.9 还是没装都没关系）
 2. `uv tool install mdymcp`
-3. 启动 `mdymcp-install` 交互向导 —— 浏览器 OAuth 拿 v1 凭据 → 自动跳出 HAP 授权页拿 HAP token → 让你选范围（用户级/项目级/两个都要）+ 编号多选要注册的 IDE → 检测到 Claude Code 时自动安装 mdymcp skill（使用心智 + 故障 SOP）到 `~/.claude/skills/mdymcp/`
+3. 启动 `mdymcp-install` 交互向导 —— 浏览器 OAuth 拿 v1 凭据 → 自动打开 HAP 个人 PAT 页粘 `MD_HAP_PAT` → 让你选范围（用户级/项目级/两个都要）+ 编号多选要注册的 IDE → 检测到 Claude Code 时自动安装 mdymcp skill（使用心智 + 故障 SOP）到 `~/.claude/skills/mdymcp/`
 
 配置写在 `~/.mdymcp/.env`（Windows: `%USERPROFILE%\.mdymcp\.env`），跨目录都能用。
 
