@@ -209,17 +209,29 @@ def write_env(env_file: Path, updates: dict[str, str]) -> None:
 
 
 def step_credentials(py: Path, root: Path) -> dict[str, str]:
-    info("步骤 1/5：获取明道凭据（MD_ACCOUNT_ID / MD_KEY）")
+    info("步骤 1/5：获取明道 v1 token（本地 OAuth）")
     env_file = root / ".env"
     existing = read_env(env_file)
-    if existing.get("MD_ACCOUNT_ID") and existing.get("MD_KEY"):
-        ok(f".env 已存在凭据：MD_ACCOUNT_ID={existing['MD_ACCOUNT_ID']}")
-        if not ask_yes("要重新获取吗？", default=False):
-            return {k: existing[k] for k in ("MD_ACCOUNT_ID", "MD_KEY", "MD_HAP_PAT")
-                    if k in existing}
+    token_file = Path.home() / ".mdymcp" / "v1_token.json"
+
+    # app_secret 是本地换 token 的前提（开放平台「我的应用」里查）
+    if not _clean_token(existing.get("MD_APP_SECRET", "")):
+        print("  • 本地签发/刷新 token 需要 OAuth 应用的 app_secret")
+        print("  • 在明道开放平台「我的应用」里查（与 app_key 配对）")
+        secret = _clean_token(input("MD_APP_SECRET: "))
+        if not secret:
+            err("未填 MD_APP_SECRET，无法走本地 token 链路")
+            sys.exit(1)
+        write_env(env_file, {"MD_APP_SECRET": secret})
+        ok("已写入 .env")
+
+    if token_file.exists():
+        ok(f"已存在本地 token：{token_file}")
+        if not ask_yes("要重新授权吗？", default=False):
+            return {k: existing[k] for k in ("MD_HAP_PAT",) if k in existing}
 
     info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
-    info(f"授权完成后会写入 {env_file}")
+    info(f"授权完成后 token 写入 {token_file}")
     # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到
     code = (
         "from pathlib import Path; from mdymcp.cli_auth import main;"
@@ -232,11 +244,11 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
         err(f"OAuth 失败：{e}")
         sys.exit(1)
 
-    creds = read_env(env_file)
-    if not creds.get("MD_ACCOUNT_ID") or not creds.get("MD_KEY"):
-        err("OAuth 完成但未在 .env 找到凭据")
+    if not token_file.exists():
+        err("OAuth 完成但未生成 token 文件")
         sys.exit(1)
-    out = {"MD_ACCOUNT_ID": creds["MD_ACCOUNT_ID"], "MD_KEY": creds["MD_KEY"]}
+    creds = read_env(env_file)
+    out: dict[str, str] = {}
 
     print()
     info("HAP 网关 PAT（让你在 Claude Code 里直接用 HAP 工具：应用/工作表/记录/审批）")

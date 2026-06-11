@@ -1,4 +1,4 @@
-"""Token fetcher — 远端 hook 提供 24h token，内存缓存到次日本地 00:00。"""
+"""Token 管理 — v1 token 本地签发/持久化/刷新（OAuth2），保留远端 hook 作为未迁移机器的回落。"""
 
 from __future__ import annotations
 
@@ -30,10 +30,9 @@ _SSL_CTX = _ssl_ctx()
 BASE_API_URL = "https://api.mingdao.com"
 HOOK_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5"
 
-# OAuth 自助注册（mdymcp-auth 命令使用）
+# OAuth 本地授权（mdymcp-auth 命令使用）；app_secret 走 .env 的 MD_APP_SECRET
 APP_KEY_DEFAULT = "6A228C49DAC4"
 CALLBACK_PORT_DEFAULT = 8080
-REGISTER_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks/NjllNjFkYjM2NTAyMDc5NzgxMGNmZDll"
 
 # HAP 网关凭据（独立于 v1 token）：用户在 https://www.mingdao.com/personal?type=pat
 # 自助生成的个人 PAT（pat_xxx），本身就是 Bearer token，无需任何远端交换。
@@ -68,17 +67,155 @@ def _next_local_midnight_ts() -> int:
     return int(tomorrow.timestamp())
 
 
-def ensure_access_token() -> str:
-    if _cache["token"] and time.time() < _cache["expires_at"] - 60:
-        return str(_cache["token"])
+# ─────────────────────────────────────────────
+# v1 token：本地签发 / 持久化 / 刷新
+# ─────────────────────────────────────────────
 
+V1_TOKEN_FILE = MDYMCP_USER_HOME / "v1_token.json"
+TOKEN_SAFETY_MARGIN = 300  # 提前 5 分钟视为过期，避免边界上拿到将死 token
+
+
+class _TokenFileLock:
+    """跨进程文件锁：防止同机多个 MCP 进程同时 refresh 把 refresh_token 轮换两次。
+    Windows 上 fcntl 不可用则退化为无锁（mdymcp 主场景是 mac）。"""
+
+    def __init__(self) -> None:
+        self._fh = None
+
+    def __enter__(self) -> "_TokenFileLock":
+        try:
+            import fcntl
+            MDYMCP_USER_HOME.mkdir(parents=True, exist_ok=True)
+            self._fh = open(V1_TOKEN_FILE.with_suffix(".lock"), "w")
+            fcntl.flock(self._fh, fcntl.LOCK_EX)
+        except Exception:
+            self._fh = None
+        return self
+
+    def __exit__(self, *_a: Any) -> None:
+        if self._fh is not None:
+            try:
+                import fcntl
+                fcntl.flock(self._fh, fcntl.LOCK_UN)
+            finally:
+                self._fh.close()
+
+
+def _read_token_file() -> dict[str, Any] | None:
+    try:
+        return json.loads(V1_TOKEN_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_token_file(data: dict[str, Any]) -> None:
+    MDYMCP_USER_HOME.mkdir(parents=True, exist_ok=True)
+    V1_TOKEN_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    os.chmod(V1_TOKEN_FILE, 0o600)
+
+
+def _http_json(url: str, *, post_body: dict[str, Any] | None = None) -> dict[str, Any]:
+    headers = {"Accept": "application/json", "User-Agent": "mdymcp/0.4"}
+    data = None
+    if post_body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(post_body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method="POST" if data else "GET")
+    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _exchange_token(grant_type: str, **params: str) -> dict[str, Any]:
+    """调明道 oauth2/access_token 换 token 对。返回标准化的 token 文件结构。
+
+    官方文档没写死 GET/POST，这里 GET query 优先、POST JSON 兜底。
+    """
     _load_env()
+    app_key = os.getenv("MD_APP_KEY", APP_KEY_DEFAULT).strip()
+    app_secret = os.getenv("MD_APP_SECRET", "").strip()
+    if not app_secret:
+        raise RuntimeError(
+            "[v1] 缺 MD_APP_SECRET（明道开放平台「我的应用」里查）。"
+            "写入 ~/.mdymcp/.env 后重试。"
+        )
+
+    q = {"app_key": app_key, "app_secret": app_secret,
+         "grant_type": grant_type, **params}
+    endpoint = f"{BASE_API_URL}/oauth2/access_token"
+
+    import urllib.parse as _up
+    last_err: Exception | None = None
+    data: dict[str, Any] = {}
+    for attempt in ("get", "post"):
+        try:
+            if attempt == "get":
+                data = _http_json(f"{endpoint}?{_up.urlencode(q)}")
+            else:
+                data = _http_json(endpoint, post_body=q)
+        except Exception as e:
+            last_err = e
+            continue
+        payload = data.get("data") if isinstance(data.get("data"), dict) else data
+        access_token = str(payload.get("access_token") or "").strip()
+        if access_token:
+            now = int(time.time())
+            try:
+                expires_in = int(payload.get("expires_in") or 0)
+            except (TypeError, ValueError):
+                expires_in = 0
+            if expires_in <= 0:
+                expires_in = 86400  # 文档：未发布应用 1 天，保守取下限
+            return {
+                "access_token": access_token,
+                "refresh_token": str(payload.get("refresh_token") or "").strip(),
+                "expires_at": now + expires_in,
+                "obtained_at": now,
+            }
+    detail = data if data else last_err
+    raise RuntimeError(f"[v1] oauth2/access_token({grant_type}) 失败：{detail!r}")
+
+
+def _ensure_local_token() -> str:
+    """本地链路：token 文件未过期直接用；过期用 refresh_token 续；续不动指引重授权。"""
+    with _TokenFileLock():
+        tok = _read_token_file()
+        now = time.time()
+        if tok and tok.get("access_token") and now < tok.get("expires_at", 0) - TOKEN_SAFETY_MARGIN:
+            _cache["token"] = tok["access_token"]
+            _cache["expires_at"] = tok["expires_at"]
+            return str(tok["access_token"])
+
+        refresh_token = (tok or {}).get("refresh_token", "")
+        if not refresh_token:
+            raise RuntimeError(
+                "[v1] 本地无可用 token（未授权或 token 文件损坏）。"
+                "请运行 mdymcp-auth 重新授权。"
+            )
+        try:
+            new_tok = _exchange_token("refresh_token", refresh_token=refresh_token)
+        except Exception as e:
+            raise RuntimeError(
+                f"[v1] 刷新 token 失败（refresh_token 可能已过期，有效期 14 天）。"
+                f"请运行 mdymcp-auth 重新授权。原始错误：{e}"
+            ) from e
+        _write_token_file(new_tok)
+        _cache["token"] = new_tok["access_token"]
+        _cache["expires_at"] = new_tok["expires_at"]
+        return str(new_tok["access_token"])
+
+
+def _hook_token_legacy() -> str:
+    """旧链路：远端 hook 换 token（未配置 MD_APP_SECRET 的机器回落用，迁移完成后可删）。"""
     account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
     key = os.getenv("MD_KEY", "").strip()
     hook_url = os.getenv("MD_HOOK_URL", HOOK_URL_DEFAULT).strip()
     if not account_id or not key:
         raise RuntimeError(
-            "[v1] Missing MD_ACCOUNT_ID or MD_KEY. Set them in .env or environment."
+            "[v1] 未配置本地 OAuth（MD_APP_SECRET）也缺旧凭据 MD_ACCOUNT_ID/MD_KEY。"
+            "推荐：在 .env 配 MD_APP_SECRET 后运行 mdymcp-auth 走本地 token。"
         )
 
     body = json.dumps({"account_id": account_id, "key": key}).encode("utf-8")
@@ -88,7 +225,7 @@ def ensure_access_token() -> str:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "mdymcp/0.2",
+            "User-Agent": "mdymcp/0.4",
         },
         method="POST",
     )
@@ -102,6 +239,17 @@ def ensure_access_token() -> str:
     _cache["token"] = token
     _cache["expires_at"] = _next_local_midnight_ts()
     return str(token)
+
+
+def ensure_access_token() -> str:
+    if _cache["token"] and time.time() < _cache["expires_at"] - 60:
+        return str(_cache["token"])
+
+    _load_env()
+    # 配了 MD_APP_SECRET 或已有本地 token 文件 → 走本地链路；否则回落旧 hook
+    if os.getenv("MD_APP_SECRET", "").strip() or V1_TOKEN_FILE.exists():
+        return _ensure_local_token()
+    return _hook_token_legacy()
 
 
 def ensure_hap_token() -> str:
@@ -139,7 +287,7 @@ _CALLBACK_HTML_OK = """<!doctype html>
 <html><head><meta charset="utf-8"><title>mdymcp 授权成功</title></head>
 <body style="font-family:system-ui;max-width:560px;margin:80px auto;padding:0 24px;color:#222">
 <h2>✅ 授权成功</h2>
-<p>已收到授权码，正在和服务端交换凭据。请回到终端查看结果，本页面可以关闭。</p>
+<p>已收到授权码，正在本地交换 token。请回到终端查看结果，本页面可以关闭。</p>
 </body></html>"""
 
 _CALLBACK_HTML_ERR = """<!doctype html>
@@ -326,20 +474,22 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
 
 def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
-    """一键 OAuth：起本地 server → 开隐身浏览器 → 接 code → 换 key → 写 .env。
+    """一键 OAuth：起本地 server → 开隐身浏览器 → 接 code → 本地换 token → 写 token 文件。
 
-    返回 {"account_id": ..., "key": ...}。
+    返回 {"token_file": ...}。要求 .env 已配 MD_APP_SECRET（开放平台「我的应用」里查）。
     """
     _load_env()
     app_key = os.getenv("MD_APP_KEY", APP_KEY_DEFAULT).strip()
+    app_secret = os.getenv("MD_APP_SECRET", "").strip()
     port = int(os.getenv("MD_CALLBACK_PORT", str(CALLBACK_PORT_DEFAULT)))
-    register_url = os.getenv("MD_REGISTER_URL", REGISTER_URL_DEFAULT).strip()
     redirect_uri = f"http://localhost:{port}/callback"
 
-    if not app_key or "REPLACE" in register_url:
+    if not app_key:
+        raise RuntimeError("APP_KEY 未配置。用环境变量 MD_APP_KEY 覆盖。")
+    if not app_secret:
         raise RuntimeError(
-            "APP_KEY 或 REGISTER_URL 未正确配置。请通过环境变量 "
-            "MD_APP_KEY / MD_REGISTER_URL 覆盖，或由维护者在 auth.py 顶部填入。"
+            "缺 MD_APP_SECRET。去明道开放平台「我的应用」查到 app_secret，"
+            "写入 ~/.mdymcp/.env（MD_APP_SECRET=xxx）后重跑 mdymcp-auth。"
         )
 
     state = secrets.token_urlsafe(16)
@@ -387,31 +537,26 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
         raise RuntimeError("state 不匹配，疑似 CSRF 攻击，已拒绝。")
 
     code = res["code"]
-    print("→ 已拿到授权码，正在请求服务端换取凭据…")
+    print("→ 已拿到授权码，正在本地换取 token…")
 
-    body = json.dumps({"code": code, "redirect_uri": redirect_uri}).encode("utf-8")
-    req = urllib.request.Request(
-        register_url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "mdymcp-auth/0.2",
-        },
-        method="POST",
+    tok = _exchange_token("authorization_code", code=code, redirect_uri=redirect_uri)
+    _write_token_file(tok)
+    _cache["token"] = tok["access_token"]
+    _cache["expires_at"] = tok["expires_at"]
+
+    # 实调一个轻量 v1 接口确认 token 真可用，避免"授权成功但用不了"
+    import urllib.parse as _up
+    verify_url = (
+        f"{BASE_API_URL}/v1/passport/get_detail?"
+        + _up.urlencode({"access_token": tok["access_token"], "format": "json"})
     )
-    with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    try:
+        verify = _http_json(verify_url)
+    except Exception as e:
+        raise RuntimeError(f"token 已签发但验证调用失败：{e}") from e
+    if not verify.get("success", True) and verify.get("error_code"):
+        raise RuntimeError(f"token 已签发但被 v1 API 拒绝：{verify!r}")
 
-    account_id = data.get("account_id") or ""
-    key = data.get("key") or ""
-    if not account_id or not key:
-        raise RuntimeError(f"Register endpoint 返回异常：{data!r}")
-
-    root = project_root or Path.cwd()
-    env_path = root / ".env"
-    _write_env_vars(env_path, {"MD_ACCOUNT_ID": account_id, "MD_KEY": key})
-    print(f"→ 已写入 {env_path}")
-    print(f"  MD_ACCOUNT_ID={account_id}")
-    print(f"  MD_KEY={'*' * 8}{key[-4:] if len(key) > 4 else ''}")
-    return {"account_id": account_id, "key": key}
+    ttl_days = max(1, round((tok["expires_at"] - tok["obtained_at"]) / 86400))
+    print(f"→ token 已写入 {V1_TOKEN_FILE}（有效约 {ttl_days} 天，过期自动用 refresh_token 续期）")
+    return {"token_file": str(V1_TOKEN_FILE)}
