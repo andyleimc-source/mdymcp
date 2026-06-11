@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -75,6 +76,16 @@ def _make_delegator(gateway: HapGateway, remote_name: str):
 
 
 def _register_gateway_tools() -> int:
+    from .auth import LEGACY_HAP_KEYS, _load_env
+    _load_env()
+    if not os.getenv("MD_HAP_PAT", "").strip():
+        legacy = sorted(k for k in LEGACY_HAP_KEYS if os.getenv(k, "").strip())
+        hint = (f"检测到旧版 HAP 凭据残留（{', '.join(legacy)}，0.3.0 起已废弃）。" if legacy else "")
+        log.warning(
+            "[HAP] 未配置 MD_HAP_PAT，应用/工作表/记录/审批这一半工具不会注册（v1 工具不受影响）。%s"
+            "修复：跑一次 mdymcp-auth 按提示补填，或去 https://www.mingdao.com/personal?type=pat "
+            "生成 PAT 写入 ~/.mdymcp/.env（MD_HAP_PAT=pat_xxx）后重启。", hint)
+        return 0
     gateway = HapGateway()
     tools = gateway.list_tools()
     if not tools:

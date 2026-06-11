@@ -214,39 +214,50 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     existing = read_env(env_file)
     token_file = Path.home() / ".mdymcp" / "v1_token.json"
 
+    skip_oauth = False
     if token_file.exists():
         ok(f"已存在本地 token：{token_file}")
         if not ask_yes("要重新授权吗？", default=False):
-            return {k: existing[k] for k in ("MD_HAP_PAT",) if k in existing}
+            skip_oauth = True  # 不重新授权也要继续走下面的 PAT 步骤
 
-    info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
-    info(f"授权完成后 token 写入 {token_file}")
-    # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到
-    code = (
-        "from pathlib import Path; from mdymcp.cli_auth import main;"
-        f"import os; os.chdir({str(root)!r});"
-        "main()"
-    )
-    try:
-        run([str(py), "-c", code])
-    except subprocess.CalledProcessError as e:
-        err(f"OAuth 失败：{e}")
-        sys.exit(1)
+    if not skip_oauth:
+        info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
+        info(f"授权完成后 token 写入 {token_file}")
+        # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到；
+        # PAT 由本向导下面统一收集，让 mdymcp-auth 跳过它自己的 PAT 提问
+        code = (
+            "from pathlib import Path; from mdymcp.cli_auth import main;"
+            f"import os; os.chdir({str(root)!r});"
+            "main()"
+        )
+        try:
+            run([str(py), "-c", code],
+                env={**os.environ, "MDYMCP_SKIP_PAT_PROMPT": "1"})
+        except subprocess.CalledProcessError as e:
+            err(f"OAuth 失败：{e}")
+            sys.exit(1)
 
-    if not token_file.exists():
-        err("OAuth 完成但未生成 token 文件")
-        sys.exit(1)
+        if not token_file.exists():
+            err("OAuth 完成但未生成 token 文件")
+            sys.exit(1)
     creds = read_env(env_file)
     out: dict[str, str] = {}
 
     print()
     info("HAP 网关 PAT（让你在 Claude Code 里直接用 HAP 工具：应用/工作表/记录/审批）")
+    from .auth import LEGACY_HAP_KEYS, _purge_env_vars
+    legacy = sorted(LEGACY_HAP_KEYS & set(creds))
     existing_pat = _clean_token(creds.get("MD_HAP_PAT", ""))
     if existing_pat:
+        if legacy:
+            _purge_env_vars(env_file, LEGACY_HAP_KEYS)
+            info(f"已清理旧版 HAP 凭据残留（{', '.join(legacy)}）")
         ok(f".env 已存在 HAP PAT（…{existing_pat[-6:]}）")
         if not ask_yes("要重新填写吗？", default=False):
             out["MD_HAP_PAT"] = existing_pat
             return out
+    elif legacy:
+        warn(f"检测到旧版 HAP 凭据（{', '.join(legacy)}）——0.3.0 起已废弃，必须改用 PAT，否则 HAP 工具不可用")
 
     print(f"  • 即将打开 HAP 个人 PAT 页：{HAP_PAT_URL}")
     print("  • 已登录 → 直接在页面生成/管理 PAT；未登录 → 先登录会自动跳回该页")
@@ -259,6 +270,7 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     pat = _clean_token(input("MD_HAP_PAT (pat_xxx): "))
     if pat:
         write_env(env_file, {"MD_HAP_PAT": pat})
+        _purge_env_vars(env_file, LEGACY_HAP_KEYS)
         out["MD_HAP_PAT"] = pat
         ok("已写入 .env")
     else:

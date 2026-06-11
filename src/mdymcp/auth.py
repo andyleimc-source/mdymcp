@@ -41,6 +41,9 @@ CALLBACK_PORT_DEFAULT = 8080
 # HAP 网关凭据（独立于 v1 token）：用户在 https://www.mingdao.com/personal?type=pat
 # 自助生成的个人 PAT（pat_xxx），本身就是 Bearer token，无需任何远端交换。
 
+# 0.2.x 旧 HAP 链路的废弃键（refresh_token → register → hap_key），0.3.0 起只认 MD_HAP_PAT
+LEGACY_HAP_KEYS = {"MD_HAP_TOKEN", "MD_HAP_REFRESH_TOKEN", "MD_HAP_KEY"}
+
 _cache: dict[str, Any] = {"token": "", "expires_at": 0}
 
 
@@ -443,6 +446,23 @@ def _write_env_vars(env_path: Path, updates: dict[str, str]) -> None:
         if k not in seen:
             new_lines.append(f"{k}={v}")
     env_path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _purge_env_vars(env_path: Path, keys: set[str]) -> list[str]:
+    """从 .env 删除指定键，返回实际删掉的键名。注释和其它行原样保留。"""
+    if not env_path.exists():
+        return []
+    removed: list[str] = []
+    kept: list[str] = []
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        s = raw.strip()
+        if s and not s.startswith("#") and "=" in s and s.split("=", 1)[0].strip() in keys:
+            removed.append(s.split("=", 1)[0].strip())
+            continue
+        kept.append(raw)
+    if removed:
+        env_path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
+    return removed
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
