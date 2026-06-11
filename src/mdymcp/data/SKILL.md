@@ -11,7 +11,7 @@ Andy 自研包（`andyleimc-source/mdymcp`，PyPI）。**两套独立凭证**，
 
 | | v1 协作 API | HAP 网关 |
 |---|---|---|
-| 凭证 | 本地 token 文件 `~/.mdymcp/v1_token.json`（OAuth 签发，`MD_APP_SECRET` 支撑刷新） | `MD_HAP_PAT`（个人 PAT，pat_ 开头，自助生成） |
+| 凭证 | 本地 token 文件 `~/.mdymcp/v1_token.json`（`mdymcp-auth` 一键签发，app_key/secret 内嵌零配置） | `MD_HAP_PAT`（个人 PAT，pat_ 开头，自助生成） |
 | token 函数 | `ensure_access_token()`（本地文件 → 过期自动 refresh） | `ensure_hap_token()`（直接返回 PAT，无网络） |
 | 稳定性 | 稳（access_token 约 7 天，refresh_token 14 天滚动续期，全本地） | 稳（PAT 长期有效、用户自管） |
 | 覆盖工具 | 日程 `calendar_*`、组织 `company_*`、群组 `group_*`、动态 `post_*`、私信 `webchat_*`、用户 `user_*`/`find_member`(注：find_member 走 HAP)、消息 `message_*`、通行证 `passport_*` | 应用/工作表/记录/审批/角色：`get_app_list`、`get_worksheet_structure`、`get_record_list`、`create_record`、`update_record`、`find_member`、`find_department` 等 |
@@ -28,7 +28,6 @@ Andy 自研包（`andyleimc-source/mdymcp`，PyPI）。**两套独立凭证**，
 
 **报 `[v1]`** = 本地 token 链路问题（0.4.0+ 全本地，无服务端 hook）：
 - `本地无可用 token` / `刷新 token 失败` → refresh_token 过期（14 天没用过）或 token 文件损坏，跑 **`mdymcp-auth`** 重新授权（开浏览器点一下）。
-- `缺 MD_APP_SECRET` → 开放平台「我的应用」查 app_secret，写入 `~/.mdymcp/.env`。
 - token 文件可直接看过期时间：`python3 -c "import json,time;d=json.load(open('/Users/andy/.mdymcp/v1_token.json'));print('expires in',round((d['expires_at']-time.time())/3600,1),'h')"`
 
 **一行自查**（只打印 token 长度，不泄漏值，遵 `secrets-handling`）：

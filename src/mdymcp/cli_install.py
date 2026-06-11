@@ -214,17 +214,6 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     existing = read_env(env_file)
     token_file = Path.home() / ".mdymcp" / "v1_token.json"
 
-    # app_secret 是本地换 token 的前提（开放平台「我的应用」里查）
-    if not _clean_token(existing.get("MD_APP_SECRET", "")):
-        print("  • 本地签发/刷新 token 需要 OAuth 应用的 app_secret")
-        print("  • 在明道开放平台「我的应用」里查（与 app_key 配对）")
-        secret = _clean_token(input("MD_APP_SECRET: "))
-        if not secret:
-            err("未填 MD_APP_SECRET，无法走本地 token 链路")
-            sys.exit(1)
-        write_env(env_file, {"MD_APP_SECRET": secret})
-        ok("已写入 .env")
-
     if token_file.exists():
         ok(f"已存在本地 token：{token_file}")
         if not ask_yes("要重新授权吗？", default=False):

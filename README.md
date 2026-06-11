@@ -103,7 +103,7 @@ PAT 页：<https://www.mingdao.com/personal?type=pat>
 | 运行时 | 本地 token 文件，过期用 refresh_token 本地续期 | 直接用 `MD_HAP_PAT`，无远端交换 |
 | 缓存 TTL | 跟随明道下发的 expires_in（已发布应用 7 天） | 不需要（PAT 即 token） |
 
-v1 token 全程本地：`mdymcp-auth` 授权一次拿 access_token + refresh_token 落盘（chmod 600），过期自动用 refresh_token（14 天有效）续期，refresh 也过期才需重新授权。需要 `.env` 配 OAuth 应用的 `MD_APP_SECRET`。未配 `MD_APP_SECRET` 的旧机器回落老的远端 hook 链路。HAP 直接用 `.env` 里的 PAT 当 Bearer token。HAP 网关握手失败时**不崩 server**，仅跳过远端工具注册，v1 工具仍可用。
+v1 token 全程本地：`mdymcp-auth` 授权一次拿 access_token + refresh_token 落盘（chmod 600），过期自动用 refresh_token（14 天有效）续期，refresh 也过期才需重新授权。app_key/app_secret 内嵌在包里（公共客户端模式，同 Google/GitHub CLI），零配置。已有旧凭据（MD_ACCOUNT_ID/MD_KEY）且未授权的机器回落老的远端 hook 链路。HAP 直接用 `.env` 里的 PAT 当 Bearer token。HAP 网关握手失败时**不崩 server**，仅跳过远端工具注册，v1 工具仍可用。
 
 ---
 
@@ -112,14 +112,11 @@ v1 token 全程本地：`mdymcp-auth` 授权一次拿 access_token + refresh_tok
 `~/.mdymcp/.env`（或各 IDE 的 MCP JSON 里的 env 块）：
 
 ```env
-# 必填：v1 协作 API（本地 OAuth 换 token 用）
-MD_APP_SECRET=OAuth 应用的 app_secret（开放平台「我的应用」里查）
-
 # HAP 网关 PAT（在 https://www.mingdao.com/personal?type=pat 生成，pat_ 开头）
 MD_HAP_PAT=  # install 时粘贴；留空 = 跳过 HAP
 
 # 可选（通常不用动）
-# MD_APP_KEY=<自定义 OAuth app_key>
+# MD_APP_KEY= / MD_APP_SECRET=<换成自己的 OAuth 应用>
 # MD_CALLBACK_PORT=8080
 # 旧链路回落（未配 MD_APP_SECRET 时才用）
 # MD_ACCOUNT_ID= / MD_KEY= / MD_HOOK_URL=
@@ -135,7 +132,6 @@ MD_HAP_PAT=  # install 时粘贴；留空 = 跳过 HAP
 | curl / irm 拉 astral.sh 失败 | 走代理；或从 <https://github.com/astral-sh/uv/releases> 下载 tarball 手动解压到 `~/.local/bin/` |
 | Windows 下 `irm \| iex` 报执行策略错误 | 管理员 PowerShell：`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | `[v1] 本地无可用 token` / `刷新 token 失败` | 跑 `mdymcp-auth` 重新授权（refresh_token 14 天没用过会过期） |
-| `缺 MD_APP_SECRET` | 开放平台「我的应用」查 app_secret，写入 `~/.mdymcp/.env` |
 | `缺 MD_HAP_PAT` / `PAT 无效或已过期` | 去 <https://www.mingdao.com/personal?type=pat> 重新生成 PAT，更新 `.env` 的 `MD_HAP_PAT` 或重跑 `mdymcp-install` |
 | IDE 里看不到 mdymcp | 重启 IDE；或在 IDE 的 MCP 设置里点 Refresh。GUI 启动找不到 `uvx` 时改从终端启动 IDE（默认写绝对路径应该已规避这个） |
 | 启动显示 `HAP 网关工具 0 个` | `/mcp` 握手失败（多半是网络）；v1 工具不受影响 |

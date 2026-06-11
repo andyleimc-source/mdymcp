@@ -30,8 +30,12 @@ _SSL_CTX = _ssl_ctx()
 BASE_API_URL = "https://api.mingdao.com"
 HOOK_URL_DEFAULT = "https://api.mingdao.com/workflow/hooks2/NjlkYzQ5NGIwMzM0NzkwYjg4MWY4NTk5"
 
-# OAuth 本地授权（mdymcp-auth 命令使用）；app_secret 走 .env 的 MD_APP_SECRET
+# OAuth 本地授权（mdymcp-auth 命令使用）。
+# app_key/app_secret 有意公开内嵌（公共客户端模式，同 Google/GitHub CLI）：
+# 安全边界在用户浏览器登录+授权，secret 公开不会泄露任何用户数据。
+# 可用 MD_APP_KEY / MD_APP_SECRET 环境变量换成自己的 OAuth 应用。
 APP_KEY_DEFAULT = "6A228C49DAC4"
+APP_SECRET_DEFAULT = "29F04C41F3C41EDA8297F3B273AD710"
 CALLBACK_PORT_DEFAULT = 8080
 
 # HAP 网关凭据（独立于 v1 token）：用户在 https://www.mingdao.com/personal?type=pat
@@ -116,14 +120,15 @@ def _write_token_file(data: dict[str, Any]) -> None:
     os.chmod(V1_TOKEN_FILE, 0o600)
 
 
-def _http_json(url: str, *, post_body: dict[str, Any] | None = None) -> dict[str, Any]:
+def _http_json(url: str, *, form_body: dict[str, Any] | None = None) -> dict[str, Any]:
+    import urllib.parse as _up
     headers = {"Accept": "application/json", "User-Agent": "mdymcp/0.4"}
     data = None
-    if post_body is not None:
-        headers["Content-Type"] = "application/json"
-        data = json.dumps(post_body).encode("utf-8")
+    if form_body is not None:
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        data = _up.urlencode(form_body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers,
-                                 method="POST" if data else "GET")
+                                 method="POST" if data is not None else "GET")
     with urllib.request.urlopen(req, timeout=30, context=_SSL_CTX) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -131,30 +136,26 @@ def _http_json(url: str, *, post_body: dict[str, Any] | None = None) -> dict[str
 def _exchange_token(grant_type: str, **params: str) -> dict[str, Any]:
     """调明道 oauth2/access_token 换 token 对。返回标准化的 token 文件结构。
 
-    官方文档没写死 GET/POST，这里 GET query 优先、POST JSON 兜底。
+    实测可用格式（与服务端工作流一致）：POST x-www-form-urlencoded；
+    兜底参数全拼 query 的 POST。
     """
     _load_env()
     app_key = os.getenv("MD_APP_KEY", APP_KEY_DEFAULT).strip()
-    app_secret = os.getenv("MD_APP_SECRET", "").strip()
-    if not app_secret:
-        raise RuntimeError(
-            "[v1] 缺 MD_APP_SECRET（明道开放平台「我的应用」里查）。"
-            "写入 ~/.mdymcp/.env 后重试。"
-        )
+    app_secret = os.getenv("MD_APP_SECRET", APP_SECRET_DEFAULT).strip()
 
     q = {"app_key": app_key, "app_secret": app_secret,
-         "grant_type": grant_type, **params}
+         "grant_type": grant_type, "format": "json", **params}
     endpoint = f"{BASE_API_URL}/oauth2/access_token"
 
     import urllib.parse as _up
     last_err: Exception | None = None
     data: dict[str, Any] = {}
-    for attempt in ("get", "post"):
+    for attempt in ("post_form", "post_query"):
         try:
-            if attempt == "get":
-                data = _http_json(f"{endpoint}?{_up.urlencode(q)}")
+            if attempt == "post_form":
+                data = _http_json(endpoint, form_body=q)
             else:
-                data = _http_json(endpoint, post_body=q)
+                data = _http_json(f"{endpoint}?{_up.urlencode(q)}", form_body={})
         except Exception as e:
             last_err = e
             continue
@@ -246,10 +247,12 @@ def ensure_access_token() -> str:
         return str(_cache["token"])
 
     _load_env()
-    # 配了 MD_APP_SECRET 或已有本地 token 文件 → 走本地链路；否则回落旧 hook
-    if os.getenv("MD_APP_SECRET", "").strip() or V1_TOKEN_FILE.exists():
+    # 已本地授权 → 本地链路；仅有旧凭据的未迁移机器 → 回落旧 hook；都没有 → 指引授权
+    if V1_TOKEN_FILE.exists():
         return _ensure_local_token()
-    return _hook_token_legacy()
+    if os.getenv("MD_ACCOUNT_ID", "").strip() and os.getenv("MD_KEY", "").strip():
+        return _hook_token_legacy()
+    raise RuntimeError("[v1] 尚未授权。请运行 mdymcp-auth（开浏览器一键授权）。")
 
 
 def ensure_hap_token() -> str:
@@ -476,21 +479,12 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
     """一键 OAuth：起本地 server → 开隐身浏览器 → 接 code → 本地换 token → 写 token 文件。
 
-    返回 {"token_file": ...}。要求 .env 已配 MD_APP_SECRET（开放平台「我的应用」里查）。
+    返回 {"token_file": ...}。app_key/app_secret 已内嵌默认值，无需配置。
     """
     _load_env()
     app_key = os.getenv("MD_APP_KEY", APP_KEY_DEFAULT).strip()
-    app_secret = os.getenv("MD_APP_SECRET", "").strip()
     port = int(os.getenv("MD_CALLBACK_PORT", str(CALLBACK_PORT_DEFAULT)))
     redirect_uri = f"http://localhost:{port}/callback"
-
-    if not app_key:
-        raise RuntimeError("APP_KEY 未配置。用环境变量 MD_APP_KEY 覆盖。")
-    if not app_secret:
-        raise RuntimeError(
-            "缺 MD_APP_SECRET。去明道开放平台「我的应用」查到 app_secret，"
-            "写入 ~/.mdymcp/.env（MD_APP_SECRET=xxx）后重跑 mdymcp-auth。"
-        )
 
     state = secrets.token_urlsafe(16)
     authorize_url = (
@@ -547,7 +541,7 @@ def run_auth_flow(project_root: Path | None = None) -> dict[str, str]:
     # 实调一个轻量 v1 接口确认 token 真可用，避免"授权成功但用不了"
     import urllib.parse as _up
     verify_url = (
-        f"{BASE_API_URL}/v1/passport/get_detail?"
+        f"{BASE_API_URL}/v1/passport/get_passport_detail?"
         + _up.urlencode({"access_token": tok["access_token"], "format": "json"})
     )
     try:
