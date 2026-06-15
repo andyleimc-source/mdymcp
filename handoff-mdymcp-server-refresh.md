@@ -139,11 +139,12 @@
 2. ✅ **已部署到腾讯云内地 101.43.4.46**（2026-06-15）：daemon + systemd timer active；首跑 `OK: 无需刷新 23h59m`；受限 key 自测能 cat、`no-pty` 挡 shell 生效；install 步骤 2 用 server 模式实际 SSH 取 token 验证通过（`v1 凭据有效`）。本机 Mac 已切 server。（Mac 对该服务器本就免密 key 登录、sudo 免密，故 provision 全程无需输密码。）
 3. ✅ `ensure_access_token` 加 server 分支 + `_ensure_server_token`（受限 SSH key 远程读、每次现取、只进程内存缓存、绝不本地 refresh）。`auth.py`。
 4. ✅ 写 provision + 向导：`server/provision.sh`（一次性部署）+ `mdymcp-server-setup`（`cli_server_setup.py`，交互向导）+ `server/refresh_daemon.py` + systemd `.service`/`.timer` + `server/README.md`。
-5. ⏳ **进行中：端到端验收**——本机已切 server 并验证取 token 通；**还差另两台 Mac 切 server** + 跑一周观察。
-   - 另两台 Mac 操作：把 `~/.mdymcp/server_token_key` 拷过去 + 在 `~/.mdymcp/.env` 加这 4 行：
-     `MD_V1_TOKEN_MODE=server` / `MD_V1_TOKEN_SSH_HOST=101.43.4.46` / `MD_V1_TOKEN_SSH_USER=ubuntu` / `MD_V1_TOKEN_SSH_KEY=~/.mdymcp/server_token_key`，重启 MCP。
-   - 或在那两台直接跑 `mdymcp-install` 选 [2]、复用现成 token 当种子（**别再重授权**，否则又轮换种子把服务器顶孤儿）。
-   - ⚠️ 一周内观察服务器 `journalctl -u mdymcp-refresh`，确认每天有一次成功 refresh、不再出 10101。
+5. ⏳ **进行中：端到端验收** + 已发版。
+   - ✅ 发版：PyPI `mdymcp 0.5.0`（2026-06-15），git 已 push（commit 9ecc760）。
+   - ✅ air（本机 100.120.85.2）：server 模式，install 步骤2 验证取 token 通。
+   - ✅ m1pro（100.86.179.75）：已 `uv tool install mdymcp==0.5.0`、拷受限 key、写 4 个 MD_V1_TOKEN_*（保留 PAT、未重授权）、端到端验证取到 64 位 token。**MCP 客户端需重启生效。**
+   - ⏳ **work.local（100.82.108.123）还没切**——只要它还在 local 模式刷新，就会把服务器 token 顶成孤儿，前功尽弃。需同样处理：升 0.5.0 + 拷 `~/.mdymcp/server_token_key` + 写 4 个 MD_V1_TOKEN_*（别重授权）。
+   - ⏳ 一周观察服务器 `journalctl -u mdymcp-refresh`，确认每天一次成功 refresh、不再出 10101。
 
 ### 已落地（2026-06-15 本轮）
 - 客户端：`auth.py` 新增 `_ensure_server_token` + `MD_V1_TOKEN_MODE=server` 分支；4 个配置键 `MD_V1_TOKEN_SSH_HOST/USER/KEY` + 可选 `MD_V1_TOKEN_REMOTE_PATH`。错误路径已 smoke test。
