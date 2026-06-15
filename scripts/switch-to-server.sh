@@ -16,7 +16,7 @@
 set -euo pipefail
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 
-VERSION="0.5.0"
+VERSION="0.5.1"
 PEER="${PEER:-100.82.108.123}"          # 受限 key 来源机（默认 work；m1pro=100.86.179.75）
 HOST="101.43.4.46"; SSH_USER="ubuntu"
 MDY="$HOME/.mdymcp"; KEY="$MDY/server_token_key"

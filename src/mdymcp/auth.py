@@ -53,19 +53,30 @@ MDYMCP_USER_HOME_LEGACY = Path.home() / ".mdmcp"
 
 
 def _load_env() -> None:
-    """Lazy load .env from cwd → ~/.mdymcp → ~/.mdmcp (legacy) → package parent (clone repo root)."""
+    """Lazy load .env，**合并** cwd → ~/.mdymcp → ~/.mdmcp (legacy) → package parent。
+
+    先出现的文件里的键优先（setdefault），后面的文件只补缺失键——这样项目自带的
+    .env（如某项目根放了 META_* / PORT 等配置）**不会屏蔽** ~/.mdymcp/.env 里的
+    MD_ 凭据（MD_ACCOUNT_ID / MD_HAP_PAT / MD_V1_TOKEN_* 等）。
+    （旧实现读到第一个 .env 就 return，导致带自有 .env 的项目里 mdymcp 完全拿不到凭据。）
+    """
+    seen: set[Any] = set()
     for d in [Path.cwd(), MDYMCP_USER_HOME, MDYMCP_USER_HOME_LEGACY,
               Path(__file__).resolve().parent.parent.parent]:
         env = d / ".env"
-        if not env.exists():
+        try:
+            marker = env.resolve()
+        except Exception:
+            marker = env
+        if marker in seen or not env.exists():
             continue
+        seen.add(marker)
         for raw_line in env.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
-        return
 
 
 def _next_local_midnight_ts() -> int:
