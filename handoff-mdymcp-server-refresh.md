@@ -134,12 +134,22 @@
 
 > §3 决策已定（不缓存 / SSH+受限key / 各自服务器），可直接开工。
 
-0. **找到 mdymcp 源码 git 仓库**（PyPI: `mdymcp`；确认仓库地址，疑似 andyleimc-source）。
-1. 通读 `auth.py`，确认 refresh 轮换行为（已基本确认）+ `ensure_access_token` 现有分发。
-2. 在腾讯云内地服务器起 **MVP**：refresh-daemon（按 expires_in 动态定时）+ token 文件，手动种子，先证明“服务器能无限续命”≥3 天。
-3. 改 `ensure_access_token` 加 server 分支 + `_ensure_server_token`（受限 SSH key 远程读、每次现取、不缓存）。
-4. 写 provision / bootstrap（`mdymcp setup --server`：收集 SSH 信息 → 装 daemon → 布受限 key → 种 seed → 写客户端配置）。
-5. 端到端：三台 Mac 全切 server 模式跑一周，验收。
+0. ✅ **找到 mdymcp 源码 git 仓库** → `/Users/andy/code/mdymcp`（GitHub: andyleimc-source/mdymcp）。
+1. ✅ 通读 `auth.py`，确认 refresh 轮换行为 + `ensure_access_token` 现有分发（local / legacy hook）。
+2. ⏳ **未做：实际部署到腾讯云内地（101.43.4.46）跑 MVP**——需要 Andy 给服务器密码 + 一次新的 `mdymcp-auth` 种 seed。属云资源/服务器操作，待 Andy 确认后执行。
+3. ✅ `ensure_access_token` 加 server 分支 + `_ensure_server_token`（受限 SSH key 远程读、每次现取、只进程内存缓存、绝不本地 refresh）。`auth.py`。
+4. ✅ 写 provision + 向导：`server/provision.sh`（一次性部署）+ `mdymcp-server-setup`（`cli_server_setup.py`，交互向导）+ `server/refresh_daemon.py` + systemd `.service`/`.timer` + `server/README.md`。
+5. ⏳ **未做：端到端验收**——三台 Mac 全切 server 模式跑一周（依赖步骤 2 先落地）。
+
+### 已落地（2026-06-15 本轮）
+- 客户端：`auth.py` 新增 `_ensure_server_token` + `MD_V1_TOKEN_MODE=server` 分支；4 个配置键 `MD_V1_TOKEN_SSH_HOST/USER/KEY` + 可选 `MD_V1_TOKEN_REMOTE_PATH`。错误路径已 smoke test。
+- 服务器 kit：`server/`（daemon one-shot：快过期才刷 + 原子落盘 + 3 次退避；systemd timer 每小时拉起；零三方依赖）。
+- 部署：`provision.sh` 自动生成专用受限 key、推 daemon/种 seed、起 timer、布 forced-command 受限 key（只能 `cat` token 文件）、写客户端 .env、自测远程读。
+- 入口：`pyproject.toml` 注册 `mdymcp-server-setup`；`.env.example` + README + `server/README.md` 已写。
+
+### 下一步只剩「按下部署」（需 Andy）
+在一台 clone 机器（如本机）跑：`mdymcp-server-setup` → 填 `101.43.4.46` / `ubuntu`（要服务器密码）。
+它会先弹浏览器授权种 seed，再自动 provision。完成后把 `~/.mdymcp/server_token_key` + `.env` 里 4 个 `MD_V1_TOKEN_*` 拷到另外两台 Mac，**三台同时切 server**。
 
 ---
 

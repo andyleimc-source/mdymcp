@@ -1,0 +1,12 @@
+[Unit]
+Description=每小时拉起 mdymcp v1 token 刷新检查
+
+[Timer]
+# 开机 3 分钟后跑一次，之后每小时一次。daemon 自己判断「快过期才真刷」，
+# 所以每小时拉起是廉价的：绝大多数运行都是 noop，漏跑几次也不断链（token 寿命 24h）。
+OnBootSec=3min
+OnUnitActiveSec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

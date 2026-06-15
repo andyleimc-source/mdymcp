@@ -38,6 +38,7 @@ Issues = "https://github.com/andyleimc-source/mdymcp/issues"
 [project.scripts]
 mdymcp = "mdymcp.server:main"
 mdymcp-auth = "mdymcp.cli_auth:main"
+mdymcp-server-setup = "mdymcp.cli_server_setup:main"
 mdymcp-install = "mdymcp.cli_install:main"
 mdymcp-uninstall = "mdymcp.cli_uninstall:main"
 

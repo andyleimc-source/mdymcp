@@ -1,0 +1,14 @@
+[Unit]
+Description=mdymcp v1 token 集中刷新（one-shot，由 timer 周期拉起）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# provision.sh 会按实际用户/路径替换占位
+User=__RUN_USER__
+ExecStart=/usr/bin/python3 /opt/mdymcp/refresh_daemon.py
+Environment=MDYMCP_TOKEN_FILE=/opt/mdymcp/v1_token.json
+# 失败由 systemd journal 记录：journalctl -u mdymcp-refresh
+StandardOutput=journal
+StandardError=journal

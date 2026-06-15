@@ -211,6 +211,80 @@ def _ensure_local_token() -> str:
         return str(new_tok["access_token"])
 
 
+def _ensure_server_token() -> str:
+    """server 模式：用受限 SSH key 远程读常驻服务器上的 token 文件，取出 access_token。
+
+    每次现取，**不写本地文件、不持有 refresh_token、绝不在客户端 refresh**——
+    刷新由服务器上的 refresh-daemon 单点负责（见 server/）。取到的 token 只进
+    进程内内存缓存（_cache，按服务器给的 expires_at 失效），不落盘。
+
+    取 token 硬依赖服务器在线 + 网络通（频率低，已接受）；失败时报错明确指向
+    服务器 / 网络 / 重新种子，绝不静默。
+    """
+    host = os.getenv("MD_V1_TOKEN_SSH_HOST", "").strip()
+    user = os.getenv("MD_V1_TOKEN_SSH_USER", "").strip()
+    key = os.getenv("MD_V1_TOKEN_SSH_KEY", "").strip()
+    missing = [name for name, val in (
+        ("MD_V1_TOKEN_SSH_HOST", host),
+        ("MD_V1_TOKEN_SSH_USER", user),
+        ("MD_V1_TOKEN_SSH_KEY", key),
+    ) if not val]
+    if missing:
+        raise RuntimeError(
+            f"[v1] server 模式缺配置：{', '.join(missing)}。"
+            "请运行 mdymcp-server-setup 重新配置，或在 ~/.mdymcp/.env 补齐。"
+        )
+    key_path = os.path.expanduser(key)
+    if not os.path.exists(key_path):
+        raise RuntimeError(
+            f"[v1] server 模式 SSH key 不存在：{key_path}。请运行 mdymcp-server-setup 重新配置。"
+        )
+
+    cmd = [
+        "ssh", "-i", key_path,
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+        "-o", "StrictHostKeyChecking=accept-new",
+        f"{user}@{host}",
+    ]
+    # 受限 key 的 forced command 会固定 `cat <token文件>` 并忽略客户端传的命令；
+    # 仅当用非受限 key 调试时，MD_V1_TOKEN_REMOTE_PATH 才生效。
+    remote_path = os.getenv("MD_V1_TOKEN_REMOTE_PATH", "").strip()
+    if remote_path:
+        cmd += ["cat", remote_path]
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        raise RuntimeError(
+            f"[v1] server 模式取 token 失败（SSH 连不上 {user}@{host}，"
+            f"检查服务器是否在线 / 网络是否通）：{e}"
+        ) from e
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"[v1] server 模式取 token 失败（ssh 退出码 {proc.returncode}）："
+            f"{proc.stderr.strip() or proc.stdout.strip() or '无输出'}"
+        )
+    try:
+        data = json.loads(proc.stdout)
+    except Exception as e:
+        raise RuntimeError(
+            "[v1] server 模式取 token 失败（服务器返回非 JSON，"
+            "疑似受限 key 的 forced command 配错或 token 文件路径不对）："
+            f"{proc.stdout[:200]!r}"
+        ) from e
+    access_token = str(data.get("access_token") or "").strip()
+    if not access_token:
+        raise RuntimeError(f"[v1] server 模式：服务器 token 文件里没有 access_token：{data!r}")
+    try:
+        expires_at = int(data.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    _cache["token"] = access_token
+    _cache["expires_at"] = expires_at or int(time.time() + 3600)
+    return access_token
+
+
 def _hook_token_legacy() -> str:
     """旧链路：远端 hook 换 token（未配置 MD_APP_SECRET 的机器回落用，迁移完成后可删）。"""
     account_id = os.getenv("MD_ACCOUNT_ID", "").strip()
@@ -250,6 +324,10 @@ def ensure_access_token() -> str:
         return str(_cache["token"])
 
     _load_env()
+    # server 模式：去常驻服务器现取，绝不本地 refresh（多 owner 抢刷是 token 失效的真因）
+    mode = os.getenv("MD_V1_TOKEN_MODE", "local").strip().lower()
+    if mode == "server":
+        return _ensure_server_token()
     # 已本地授权 → 本地链路；仅有旧凭据的未迁移机器 → 回落旧 hook；都没有 → 指引授权
     if V1_TOKEN_FILE.exists():
         return _ensure_local_token()

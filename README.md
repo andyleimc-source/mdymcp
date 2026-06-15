@@ -105,6 +105,8 @@ PAT 页：<https://www.mingdao.com/personal?type=pat>
 
 v1 token 全程本地：`mdymcp-auth` 授权一次拿 access_token + refresh_token 落盘（chmod 600），过期自动用 refresh_token（14 天有效）续期，refresh 也过期才需重新授权。app_key/app_secret 内嵌在包里（公共客户端模式，同 Google/GitHub CLI），零配置。已有旧凭据（MD_ACCOUNT_ID/MD_KEY）且未授权的机器回落老的远端 hook 链路。HAP 直接用 `.env` 里的 PAT 当 Bearer token。HAP 网关握手失败时**不崩 server**，仅跳过远端工具注册，v1 工具仍可用。
 
+**多机共用同一账号？用 server 模式。** 多台机器/服务器持同一对 token 会互相抢刷（明道每次 refresh 都轮换 refresh_token），把对方顶成孤儿（`error_code 10101`）。把刷新集中到一台常驻服务器当唯一 owner：跑一次 `mdymcp-server-setup`（或 `bash server/provision.sh <IP> <user>`），其余机器只读、永不刷新。详见 [`server/README.md`](server/README.md)。
+
 ---
 
 ## 配置
