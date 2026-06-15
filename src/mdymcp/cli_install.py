@@ -293,15 +293,20 @@ def _choose_v1_refresh_mode(root: Path) -> None:
     current = existing.get("MD_V1_TOKEN_MODE", "local").strip().lower()
 
     print()
-    info("v1 token 刷新方式")
-    print("  • 本地：每台机器各自持有并刷新 token（单机/个人用，默认）")
-    print("  • 服务器：刷新集中到一台常驻服务器当唯一 owner（多机共用同一账号必选，")
-    print("    否则多端各自刷会互相把 refresh_token 顶成孤儿 → error_code 10101）")
-    mode = ask_choice(
-        "选择 v1 token 刷新方式",
-        [("local", "本地刷新（默认）"), ("server", "服务器集中刷新")],
-        default="server" if current == "server" else "local",
-    )
+    info("v1 token 刷新方式（必选，无默认）")
+    print("  [1] 本地刷新   —— 每台机器各自持有并刷新 token（单机/个人用）")
+    print("  [2] 服务器集中 —— 刷新集中到一台常驻服务器当唯一 owner")
+    print("       多机共用同一明道账号必选，否则多端各自刷会互相把 refresh_token")
+    print("       顶成孤儿 → error_code 10101")
+    if current == "server":
+        print("  （当前已是服务器模式）")
+    mode_map = {"1": "local", "local": "local", "2": "server", "server": "server"}
+    while True:
+        ans = input("请选择 [1=本地 / 2=服务器]: ").strip().lower()
+        if ans in mode_map:
+            mode = mode_map[ans]
+            break
+        print("  请输入 1 或 2（不能留空）")
 
     from .auth import _purge_env_vars
     from .cli_server_setup import SERVER_ENV_KEYS, collect_and_provision, ensure_seed_token
