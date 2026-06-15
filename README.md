@@ -1,19 +1,29 @@
 # mdymcp
 
-> ## ⬆️ 已装过的用户升级（0.3.0，重要）
+> ## ⬆️ 已装过的用户升级
 >
-> 0.3.0 起 **HAP 改用个人 PAT**，不再走旧的 `refresh_token / hap_key` 那套。两步搞定：
->
-> **1) 升级程序**
+> **升级程序（推荐这条，绕开 uv 索引缓存偶发不更新）：**
 > ```bash
-> uv tool upgrade mdymcp
+> uv tool install --force --refresh mdymcp
 > ```
+> （或 `uv tool upgrade mdymcp`；升完重启 IDE / 重开会话。）
 >
-> **2) 换 HAP 凭据**：去 <https://www.mingdao.com/personal?type=pat> 生成一个 PAT（`pat_` 开头），然后任选其一：
-> - **省事**：直接重跑 `mdymcp-install`，走到 HAP 步骤粘进去即可；
+> ### 0.5.x（v1 token 多机集中刷新）
+> **单机用户**：升级程序即可，**无需任何改动**（默认仍是本地刷新，全向后兼容）。
+>
+> **多台机器/服务器共用同一明道账号**：必须切「服务器集中刷新」。原因——多端各自持有
+> token 各自刷新，明道每次 refresh 都轮换 refresh_token，会把彼此顶成孤儿（`error_code 10101`）。
+> 把刷新集中到一台常驻服务器当唯一 owner，其余端只读：在做初始部署的那台跑
+> `mdymcp-install` 选 `[2] 服务器集中`（或 `mdymcp-server-setup`），其余机器把生成的
+> `~/.mdymcp/server_token_key` + `.env` 里 4 个 `MD_V1_TOKEN_*` 拷过去（**别在其余机器重新授权**）。详见 [`server/README.md`](server/README.md)。
+> > ⚠️ 若某个项目自己的 venv 里也 `import mdymcp`（不是只走全局 binary），那份要单独升：
+> > `uv pip install --python <项目>/.venv/bin/python -U mdymcp`。
+>
+> ### 0.3.0（HAP 改用个人 PAT）— 仍停在 0.2.x 的老用户才需要
+> 0.3.0 起 HAP 改用个人 PAT，不再走旧的 `refresh_token / hap_key`。去
+> <https://www.mingdao.com/personal?type=pat> 生成 PAT（`pat_` 开头），然后任选其一：
+> - **省事**：重跑 `mdymcp-install`，走到 HAP 步骤粘进去；
 > - **手动**：编辑 `~/.mdymcp/.env`，**删掉** `MD_HAP_KEY` / `MD_HAP_REFRESH_TOKEN` / `MD_HAP_TOKEN`，**加上** `MD_HAP_PAT=pat_xxx`。
->
-> 改完重启 IDE。只用 v1 工具、没配过 HAP 的用户：`uv tool upgrade mdymcp` 即可，无需改动。
 
 ## 一键安装
 
