@@ -240,6 +240,10 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
         if not token_file.exists():
             err("OAuth 完成但未生成 token 文件")
             sys.exit(1)
+
+    # v1 token 刷新方式：本地（默认）vs 服务器集中（多机共用同一账号必选）
+    _choose_v1_refresh_mode(root)
+
     creds = read_env(env_file)
     out: dict[str, str] = {}
 
@@ -276,6 +280,51 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     else:
         warn("未填 PAT，跳过 HAP 网关；v1 工具不受影响")
     return out
+
+
+def _choose_v1_refresh_mode(root: Path) -> None:
+    """问用户 v1 token 怎么刷新：本地（默认）还是集中到一台服务器。
+
+    单机/个人用 → 本地（现状，零额外配置）。多机共用同一明道账号 → 服务器集中，
+    否则多端各自刷会互相把 refresh_token 顶成孤儿（error_code 10101）。
+    """
+    env_file = root / ".env"
+    existing = read_env(env_file)
+    current = existing.get("MD_V1_TOKEN_MODE", "local").strip().lower()
+
+    print()
+    info("v1 token 刷新方式")
+    print("  • 本地：每台机器各自持有并刷新 token（单机/个人用，默认）")
+    print("  • 服务器：刷新集中到一台常驻服务器当唯一 owner（多机共用同一账号必选，")
+    print("    否则多端各自刷会互相把 refresh_token 顶成孤儿 → error_code 10101）")
+    mode = ask_choice(
+        "选择 v1 token 刷新方式",
+        [("local", "本地刷新（默认）"), ("server", "服务器集中刷新")],
+        default="server" if current == "server" else "local",
+    )
+
+    from .auth import _purge_env_vars
+    from .cli_server_setup import SERVER_ENV_KEYS, collect_and_provision, ensure_seed_token
+
+    if mode != "server":
+        # 保持/切回本地：清掉残留的 server 配置键，避免顶死
+        removed = _purge_env_vars(env_file, SERVER_ENV_KEYS)
+        if removed:
+            info("已清理旧的服务器模式配置，回到本地刷新")
+        ok("使用本地刷新")
+        return
+
+    info("服务器集中刷新：把刷新部署到你自己的一台常驻服务器（一次性）")
+    seed_home = Path.home() / ".mdymcp"  # seed token 固定落在这里（见 auth.V1_TOKEN_FILE）
+    if not ensure_seed_token(seed_home):
+        warn("没拿到 seed token，暂不部署服务器模式；先按本地刷新继续。")
+        _purge_env_vars(env_file, SERVER_ENV_KEYS)
+        return
+    if not collect_and_provision(root):
+        warn("服务器部署未完成；当前仍是本地刷新。之后可重跑 mdymcp-server-setup。")
+        _purge_env_vars(env_file, SERVER_ENV_KEYS)
+        return
+    ok("已切到服务器集中刷新（其余机器拷贝 server_token_key + 4 个 MD_V1_TOKEN_* 即可）")
 
 
 def _stepwise_call(py: Path, env: dict, code: str) -> tuple[bool, str]:
