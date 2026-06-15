@@ -30,8 +30,9 @@ mcp = FastMCP(
     "mdymcp",
     instructions=(
         "明道统一 MCP：v1 协作 API（动态/日程/群组/用户/组织/私信/收件箱/账户）+ "
-        "HAP 网关（应用/工作表/记录/审批/角色）。.env 配置 MD_ACCOUNT_ID + MD_KEY（v1）"
-        "与 MD_HAP_PAT（HAP 个人 PAT，pat_xxx）；v1 token 每日自动刷新，HAP 直接用 PAT。"
+        "HAP 网关（应用/工作表/记录/审批/角色）。两套独立凭证：v1 token 由 MD_V1_TOKEN_MODE "
+        "决定来源（server=从常驻服务器现取、单点 refresh-daemon 刷；local=mdymcp-auth 本地授权续期）；"
+        "HAP 用 MD_HAP_PAT（个人 PAT，pat_xxx，用户自管）。"
     ),
 )
 
