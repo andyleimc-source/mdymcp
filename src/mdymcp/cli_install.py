@@ -208,41 +208,38 @@ def write_env(env_file: Path, updates: dict[str, str]) -> None:
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _run_local_oauth(py: Path, root: Path, token_file: Path) -> None:
+    info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
+    info(f"授权完成后 token 写入 {token_file}")
+    # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到；
+    # PAT 由本向导下面统一收集，让 mdymcp-auth 跳过它自己的 PAT 提问
+    code = (
+        "from pathlib import Path; from mdymcp.cli_auth import main;"
+        f"import os; os.chdir({str(root)!r});"
+        "main()"
+    )
+    try:
+        run([str(py), "-c", code],
+            env={**os.environ, "MDYMCP_SKIP_PAT_PROMPT": "1"})
+    except subprocess.CalledProcessError as e:
+        err(f"OAuth 失败：{e}")
+        sys.exit(1)
+    if not token_file.exists():
+        err("OAuth 完成但未生成 token 文件")
+        sys.exit(1)
+
+
 def step_credentials(py: Path, root: Path) -> dict[str, str]:
-    info("步骤 1/5：获取明道 v1 token（本地 OAuth）")
+    info("步骤 1/5：选择 v1 token 刷新方式 + 获取凭据")
     env_file = root / ".env"
-    existing = read_env(env_file)
     token_file = Path.home() / ".mdymcp" / "v1_token.json"
 
-    skip_oauth = False
-    if token_file.exists():
-        ok(f"已存在本地 token：{token_file}")
-        if not ask_yes("要重新授权吗？", default=False):
-            skip_oauth = True  # 不重新授权也要继续走下面的 PAT 步骤
-
-    if not skip_oauth:
-        info("即将打开浏览器隐身窗口，请登录要授权的明道账号。")
-        info(f"授权完成后 token 写入 {token_file}")
-        # 直接调用模块，避免 shutil.which 在 PATH 缺失时找不到；
-        # PAT 由本向导下面统一收集，让 mdymcp-auth 跳过它自己的 PAT 提问
-        code = (
-            "from pathlib import Path; from mdymcp.cli_auth import main;"
-            f"import os; os.chdir({str(root)!r});"
-            "main()"
-        )
-        try:
-            run([str(py), "-c", code],
-                env={**os.environ, "MDYMCP_SKIP_PAT_PROMPT": "1"})
-        except subprocess.CalledProcessError as e:
-            err(f"OAuth 失败：{e}")
-            sys.exit(1)
-
-        if not token_file.exists():
-            err("OAuth 完成但未生成 token 文件")
-            sys.exit(1)
-
-    # v1 token 刷新方式：本地（默认）vs 服务器集中（多机共用同一账号必选）
-    _choose_v1_refresh_mode(root)
+    # 1) 先必选刷新方式（本地各自刷 vs 服务器集中），再据此准备 token
+    mode = _ask_v1_refresh_mode(root)
+    if mode == "server":
+        _setup_server_refresh(py, root, token_file)
+    else:
+        _setup_local_refresh(py, root, token_file)
 
     creds = read_env(env_file)
     out: dict[str, str] = {}
@@ -282,16 +279,13 @@ def step_credentials(py: Path, root: Path) -> dict[str, str]:
     return out
 
 
-def _choose_v1_refresh_mode(root: Path) -> None:
-    """问用户 v1 token 怎么刷新：本地（默认）还是集中到一台服务器。
+def _ask_v1_refresh_mode(root: Path) -> str:
+    """必选：v1 token 怎么刷新。返回 'local' / 'server'，无默认、不能留空。
 
-    单机/个人用 → 本地（现状，零额外配置）。多机共用同一明道账号 → 服务器集中，
+    单机/个人用 → 本地（零额外配置）。多机共用同一明道账号 → 服务器集中，
     否则多端各自刷会互相把 refresh_token 顶成孤儿（error_code 10101）。
     """
-    env_file = root / ".env"
-    existing = read_env(env_file)
-    current = existing.get("MD_V1_TOKEN_MODE", "local").strip().lower()
-
+    current = read_env(root / ".env").get("MD_V1_TOKEN_MODE", "local").strip().lower()
     print()
     info("v1 token 刷新方式（必选，无默认）")
     print("  [1] 本地刷新   —— 每台机器各自持有并刷新 token（单机/个人用）")
@@ -304,29 +298,48 @@ def _choose_v1_refresh_mode(root: Path) -> None:
     while True:
         ans = input("请选择 [1=本地 / 2=服务器]: ").strip().lower()
         if ans in mode_map:
-            mode = mode_map[ans]
-            break
+            return mode_map[ans]
         print("  请输入 1 或 2（不能留空）")
 
+
+def _setup_local_refresh(py: Path, root: Path, token_file: Path) -> None:
+    """本地刷新：清掉残留 server 配置；有 token 问是否重授权，没有就走 OAuth。"""
+    from .auth import _purge_env_vars
+    from .cli_server_setup import SERVER_ENV_KEYS
+
+    if _purge_env_vars(root / ".env", SERVER_ENV_KEYS):
+        info("已清理旧的服务器模式配置，回到本地刷新")
+
+    if token_file.exists():
+        ok(f"已存在本地 token：{token_file}")
+        if not ask_yes("要重新授权吗？", default=False):
+            ok("使用本地刷新（沿用现有 token）")
+            return
+    _run_local_oauth(py, root, token_file)
+    ok("使用本地刷新")
+
+
+def _setup_server_refresh(py: Path, root: Path, token_file: Path) -> None:
+    """服务器集中刷新：备好 seed（有就复用、可选重授权）→ 一次性 provision 到你的服务器。"""
     from .auth import _purge_env_vars
     from .cli_server_setup import SERVER_ENV_KEYS, collect_and_provision, ensure_seed_token
 
-    if mode != "server":
-        # 保持/切回本地：清掉残留的 server 配置键，避免顶死
-        removed = _purge_env_vars(env_file, SERVER_ENV_KEYS)
-        if removed:
-            info("已清理旧的服务器模式配置，回到本地刷新")
-        ok("使用本地刷新")
-        return
-
+    env_file = root / ".env"
     info("服务器集中刷新：把刷新部署到你自己的一台常驻服务器（一次性）")
-    seed_home = Path.home() / ".mdymcp"  # seed token 固定落在这里（见 auth.V1_TOKEN_FILE）
-    if not ensure_seed_token(seed_home):
-        warn("没拿到 seed token，暂不部署服务器模式；先按本地刷新继续。")
+
+    # seed = 推到服务器当续期种子。有现成的就复用，但你之前 token 被顶成孤儿过，
+    # 想拿个干净的就重授权一次。
+    if token_file.exists():
+        ok(f"已有本地 token，可直接当种子：{token_file}")
+        if ask_yes("要重新授权拿个干净的种子吗？（被顶过孤儿建议 y）", default=False):
+            _run_local_oauth(py, root, token_file)
+    elif not ensure_seed_token(Path.home() / ".mdymcp"):
+        warn("没拿到 seed token，改用本地刷新。")
         _purge_env_vars(env_file, SERVER_ENV_KEYS)
         return
+
     if not collect_and_provision(root):
-        warn("服务器部署未完成；当前仍是本地刷新。之后可重跑 mdymcp-server-setup。")
+        warn("服务器部署未完成；当前仍按本地刷新。之后可重跑 mdymcp-server-setup。")
         _purge_env_vars(env_file, SERVER_ENV_KEYS)
         return
     ok("已切到服务器集中刷新（其余机器拷贝 server_token_key + 4 个 MD_V1_TOKEN_* 即可）")
