@@ -139,32 +139,51 @@
 2. ✅ **已部署到腾讯云内地 101.43.4.46**（2026-06-15）：daemon + systemd timer active；首跑 `OK: 无需刷新 23h59m`；受限 key 自测能 cat、`no-pty` 挡 shell 生效；install 步骤 2 用 server 模式实际 SSH 取 token 验证通过（`v1 凭据有效`）。本机 Mac 已切 server。（Mac 对该服务器本就免密 key 登录、sudo 免密，故 provision 全程无需输密码。）
 3. ✅ `ensure_access_token` 加 server 分支 + `_ensure_server_token`（受限 SSH key 远程读、每次现取、只进程内存缓存、绝不本地 refresh）。`auth.py`。
 4. ✅ 写 provision + 向导：`server/provision.sh`（一次性部署）+ `mdymcp-server-setup`（`cli_server_setup.py`，交互向导）+ `server/refresh_daemon.py` + systemd `.service`/`.timer` + `server/README.md`。
-5. ⏳ **进行中：端到端验收** + 已发版。
-   - ✅ 发版：PyPI `mdymcp 0.5.0`（2026-06-15），git 已 push（commit 9ecc760）。
-   - ✅ air（本机 100.120.85.2）：server 模式，install 步骤2 验证取 token 通。
-   - ✅ work.local（100.82.108.123）：全局 PyPI 0.5.0 + server 模式验证取到 token。**weekly-md 的 .venv 里 mdymcp 也升到 0.5.0**（它 import 调用，0.4.1 会本地刷新顶孤儿）。dailymd 只走全局 binary。两项目都无自带 .env（回落 ~/.mdymcp/.env）。
-   - ✅ m1pro（100.86.179.75）：全局 PyPI 0.5.0 + 受限 key + 4 个 MD_V1_TOKEN_*（未重授权）+ weekly-md venv 0.5.0，全部验证取到 token。
-   - ⏳ **air（100.120.85.2）还没切**——拉取这次会话时离线。开机后跑一条命令即可（见下）。
-   - ⚠️ **关键坑（已踩并修）**：`auth._load_env()` 只读**第一个**找到的 .env（cwd→~/.mdymcp，读到就 return）。所以项目若有自带 .env 会**完全屏蔽** ~/.mdymcp/.env，server 配置失效。weekly-md/dailymd 当前无自带 .env，安全；以后给项目加 .env 要记得带上 4 个 MD_V1_TOKEN_*。
-   - ⚠️ **每个项目可能有第二份 mdymcp**：venv 里 `import mdymcp` 的那份独立于全局 binary，必须各自升 0.5.0。`scripts/switch-to-server.sh` 已含 weekly-md venv 升级。
-   - 一周观察服务器 `journalctl -u mdymcp-refresh`，确认每天一次成功 refresh、不再出 10101。
+5. ✅ **已发版 + 全量部署验证**（2026-06-15，最终版 PyPI `mdymcp 0.5.1`）。详见下方「当前状态」。
+
+---
+
+## 当前状态（2026-06-15，截至 0.5.1）
+
+### 版本线
+- `0.5.0`：新增 server 集中刷新模式（client server 分支 + provision 工具链 + `mdymcp-server-setup`）。
+- `0.5.1`：**修 `_load_env` 屏蔽 bug**——改为合并所有 .env（先出现键优先，后补缺失），项目自带 .env（如 meta 的 META_*）不再屏蔽 `~/.mdymcp/.env` 的 MD 凭据。**这是当前线上版本。**
+
+### 服务器（唯一 owner）
+- 腾讯云内地 `101.43.4.46`：`server/refresh_daemon.py` + systemd timer active，每小时检查、快过期才刷。token 在 `/opt/mdymcp/v1_token.json`（0600）。
+- 受限 key：ubuntu `authorized_keys` 配 forced command `cat /opt/mdymcp/v1_token.json` + `no-pty` 等，只读一个文件。
+- 运维：`journalctl -u mdymcp-refresh`、`systemctl status mdymcp-refresh.timer`。
+
+### 三台 Mac × 三个项目（v1 走 server，HAP 走全局 PAT）
+| 机器 | 全局 mdymcp | weekly-md .venv | 切 server |
+|---|---|---|---|
+| work `100.82.108.123` | ✅ 0.5.1 | ✅ 0.5.1 | ✅ |
+| m1pro `100.86.179.75` | ✅ 0.5.1 | ✅ 0.5.1 | ✅ |
+| air `100.120.85.2` | ⏳ 待开机切（离线） | ⏳ | ⏳ |
+
+- 项目：`~/Desktop/dailymd`（只走全局 binary）、`~/Documents/running/hap/weekly-md`（全局 + 自有 .venv import 调用，**venv 是第二份 mdymcp 需单独升**）、`~/Documents/running/meta`（自带 .env 只有 META_*，靠 0.5.1 的合并修复才能拿到 MD 凭据）。
+- work + m1pro 上 3×2=6 处「项目目录下取 v1+HAP」已全部验证通过（v1=64位 server token，HAP=pat_…）。
 
 ### air 开机后切 server（一条命令）
-公开仓库，直接 curl 跑脚本（脚本会拉 key + 装 0.5.0 + 写 env + 升 weekly-md venv + 验证）：
 ```
 curl -fsSL https://raw.githubusercontent.com/andyleimc-source/mdymcp/main/scripts/switch-to-server.sh | bash
 ```
-（脚本默认从 work 拉受限 key；work 不在线就 `PEER=100.86.179.75 ...` 改从 m1pro 拉。）
+脚本（VERSION=0.5.1）：拉受限 key（默认从 work，`PEER=100.86.179.75` 可改 m1pro）+ 装全局 0.5.1 + 写 4 个 MD_V1_TOKEN_* + 升 weekly-md venv + 验证。⚠️ **别在 air 上 `mdymcp-auth` 重授权**（会轮换种子顶孤儿）。
 
-### 已落地（2026-06-15 本轮）
-- 客户端：`auth.py` 新增 `_ensure_server_token` + `MD_V1_TOKEN_MODE=server` 分支；4 个配置键 `MD_V1_TOKEN_SSH_HOST/USER/KEY` + 可选 `MD_V1_TOKEN_REMOTE_PATH`。错误路径已 smoke test。
-- 服务器 kit：`server/`（daemon one-shot：快过期才刷 + 原子落盘 + 3 次退避；systemd timer 每小时拉起；零三方依赖）。
-- 部署：`provision.sh` 自动生成专用受限 key、推 daemon/种 seed、起 timer、布 forced-command 受限 key（只能 `cat` token 文件）、写客户端 .env、自测远程读。
-- 入口：`pyproject.toml` 注册 `mdymcp-server-setup`；`.env.example` + README + `server/README.md` 已写。
+### 两个踩过的坑（已修，复盘）
+1. **`.env` 屏蔽**：`_load_env` 旧实现读到第一个 .env 就 return → 带自有 .env 的项目里 mdymcp 完全拿不到 MD 凭据。0.5.1 改合并已修。新项目随便放自己的 .env，不影响。
+2. **项目第二份 mdymcp**：`.mcp.json` 走全局 binary，但项目若 venv 里 `import mdymcp`（如 weekly-md），那份独立、需单独 `uv pip install -U mdymcp` 升级。
 
-### 下一步只剩「按下部署」（需 Andy）
-在一台 clone 机器（如本机）跑：`mdymcp-server-setup` → 填 `101.43.4.46` / `ubuntu`（要服务器密码）。
-它会先弹浏览器授权种 seed，再自动 provision。完成后把 `~/.mdymcp/server_token_key` + `.env` 里 4 个 `MD_V1_TOKEN_*` 拷到另外两台 Mac，**三台同时切 server**。
+### 下一轮起步 / 待办
+- air 开机切 server（上面那条命令）。
+- 跑满一周看服务器 `journalctl -u mdymcp-refresh`：每天应有 1 次成功 refresh、不再 10101 → 验收过。
+- 若新增用 mdymcp 的项目且带自有 venv，记得 `uv pip install -U mdymcp` 升级那份。
+
+### 历史（0.5.0 本轮已落地的实现）
+- 客户端：`auth.py` 的 `_ensure_server_token` + `MD_V1_TOKEN_MODE=server` 分支；配置键 `MD_V1_TOKEN_SSH_HOST/USER/KEY` + 可选 `MD_V1_TOKEN_REMOTE_PATH`。
+- 服务器 kit：`server/`（daemon one-shot + systemd timer + provision.sh + README，零三方依赖）。
+- 安装向导：`mdymcp-install` 步骤1 必选 本地/服务器（强制选，无默认）；`mdymcp-server-setup` 直达服务器部署。
+- `scripts/switch-to-server.sh`：一键把任意 Mac 切 server 只读客户端。
 
 ---
 
