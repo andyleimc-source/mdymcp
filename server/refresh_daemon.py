@@ -117,6 +117,21 @@ def main() -> None:
         _log("ERROR: token 文件无 refresh_token，无法刷新。需要重新种 seed。")
         sys.exit(2)
 
+    # 写盘预检（致命教训 2026-06-29）：明道 oauth2 refresh 会**轮换** refresh_token——
+    # 一旦 _exchange_refresh 成功，旧 refresh_token 立即作废，必须把新 token 落盘才算完成。
+    # 若先 refresh 成功、后 _write_token 因目录不可写失败，旧 token 已废、新 token 没存
+    # → token 当场变孤儿（10101），且重试都用作废的旧 token 雪崩。
+    # 因此刷新前先确认目录可写：不可写就直接退出、**绝不消耗 refresh_token**，等修好权限下轮自愈。
+    try:
+        TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _probe = TOKEN_FILE.with_suffix(".writeprobe")
+        _probe.write_text("ok", encoding="utf-8")
+        _probe.unlink()
+    except Exception as e:
+        _log(f"ERROR: token 目录不可写（{TOKEN_FILE.parent}），中止刷新以保住 refresh_token。"
+             f"请确保该目录归 daemon 运行用户所有（chown）。底层错误：{e}")
+        sys.exit(3)
+
     _log(f"距过期 {remaining}s（< 余量 {REFRESH_MARGIN}s），开始刷新…")
     last_err: Exception | None = None
     for attempt in range(1, RETRY_TIMES + 1):

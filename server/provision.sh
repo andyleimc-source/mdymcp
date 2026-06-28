@@ -73,6 +73,10 @@ ssh "${SSH_OPTS[@]}" "${SSH_USER}@${HOST}" \
 set -euo pipefail
 
 sudo mkdir -p /opt/mdymcp
+# 目录本身必须归 RUN_USER：daemon 原子写 token 时要在此目录建临时文件 v1_token.tmp，
+# 目录若归 root，daemon（以 RUN_USER 跑）建临时文件会 Permission denied → 刷新成功却存不下来
+# → refresh_token 被明道轮换作废但新 token 没落盘 → token 当场变孤儿（10101）。（2026-06-29 踩坑）
+sudo chown "${RUN_USER}:${RUN_USER}" /opt/mdymcp
 sudo install -m 0644 "${REMOTE_TMP}/refresh_daemon.py" /opt/mdymcp/refresh_daemon.py
 sudo install -m 0600 "${REMOTE_TMP}/v1_token.json"     "${REMOTE_TOKEN_PATH}"
 sudo chown "${RUN_USER}:${RUN_USER}" "${REMOTE_TOKEN_PATH}"
