@@ -41,6 +41,54 @@ def _log(msg: str) -> None:
     print(f"[{ts}] {msg}", flush=True)
 
 
+def _alert(title: str, msg: str, level: str = "timeSensitive") -> None:
+    """Bark 推送告警（可选）。/opt/mdymcp/alert.env 里配 BARK_KEY / BARK_KEY_IPAD 才生效。"""
+    keys = []
+    env_file = TOKEN_FILE.parent / "alert.env"
+    try:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if "=" in line and line.strip().startswith("BARK_KEY"):
+                keys.append(line.split("=", 1)[1].strip().strip('"'))
+    except FileNotFoundError:
+        return
+    for key in [k for k in keys if k]:
+        try:
+            url = (f"https://api.day.app/{key}/"
+                   + urllib.parse.quote(title) + "/" + urllib.parse.quote(msg)
+                   + f"?group=mdymcp&level={level}&isArchive=1")
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                resp.read()
+        except Exception as e:
+            _log(f"WARN: Bark 告警发送失败：{e}")
+
+
+def _token_alive(access_token: str):
+    """实调轻量 v1 接口测活。True=活；False=确认死（10101/10105）；None=探测失败不判死。
+
+    为什么需要（2026-07-03 实锤）：access_token 可能在有效期内被明道**单方面作废**
+    （refresh 链却还活着）。daemon 只看本地 expires_at 会误报"无需刷新"，
+    然后全网 v1 挂到下一次计划刷新（最长 ~22h）。每小时测活 → 死亡最多 1h 内自愈。
+    """
+    q = urllib.parse.urlencode({"access_token": access_token, "format": "json"})
+    req = urllib.request.Request(
+        f"{BASE_API_URL}/v1/passport/get_passport_detail?{q}",
+        headers={"Accept": "application/json", "User-Agent": "mdymcp-refresh-daemon/1.1"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        _log(f"WARN: 测活探测失败（网络/接口异常，不据此判死）：{e}")
+        return None
+    if data.get("success"):
+        return True
+    if data.get("error_code") in (10101, 10105):
+        return False
+    _log(f"WARN: 测活返回未知错误，不据此判死：{data!r}")
+    return None
+
+
 def _read_token() -> dict:
     try:
         return json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
@@ -107,10 +155,17 @@ def main() -> None:
     now = int(time.time())
     expires_at = int(tok.get("expires_at") or 0)
     remaining = expires_at - now
+    midlife_death = False
 
     if remaining > REFRESH_MARGIN:
-        _log(f"OK: 无需刷新，access_token 还有 {remaining // 3600}h{(remaining % 3600) // 60}m 到期。")
-        return
+        # 没到刷新窗口 ≠ token 还活着：测活兜底（中年死亡 → 立即强刷自愈）
+        alive = _token_alive(str(tok.get("access_token") or ""))
+        if alive is not False:
+            _log(f"OK: 无需刷新，access_token 还有 {remaining // 3600}h{(remaining % 3600) // 60}m 到期"
+                 f"（测活：{'通过' if alive else '跳过'}）。")
+            return
+        _log("ALERT: access_token 未到期但已被作废（中年死亡），强制刷新自愈…")
+        midlife_death = True
 
     refresh_token = str(tok.get("refresh_token") or "").strip()
     if not refresh_token:
@@ -140,6 +195,11 @@ def main() -> None:
             _write_token(new_tok)
             ttl_h = (new_tok["expires_at"] - now) // 3600
             _log(f"DONE: 刷新成功，新 access_token 有效约 {ttl_h}h，refresh_token 已轮换并落盘。")
+            if midlife_death:
+                # 中年死亡自愈成功 → 静默推送记录死亡时刻，帮排查是谁作废了 token
+                _alert("mdymcp token 中年死亡已自愈",
+                       f"access_token 在有效期内被外部作废，已强刷恢复（{time.strftime('%m-%d %H:%M')}）。"
+                       "想想这个时间点你/系统在明道侧做了什么。", level="passive")
             return
         except Exception as e:
             last_err = e
@@ -149,6 +209,8 @@ def main() -> None:
 
     _log(f"ERROR: 连续 {RETRY_TIMES} 次刷新失败，token 链有断裂风险（refresh_token 14 天过期）。"
          f"最后错误：{last_err}")
+    _alert("mdymcp token 刷新失败",
+           f"服务器连续 {RETRY_TIMES} 次刷新失败，链有断裂风险，需人工检查。最后错误：{last_err}")
     sys.exit(1)
 
 

@@ -47,6 +47,16 @@ LEGACY_HAP_KEYS = {"MD_HAP_TOKEN", "MD_HAP_REFRESH_TOKEN", "MD_HAP_KEY"}
 _cache: dict[str, Any] = {"token": "", "expires_at": 0}
 
 
+def invalidate_cached_token() -> None:
+    """清掉进程内 v1 token 缓存，下次 ensure_access_token() 强制重取。
+
+    用途：API 返回 10101/10105（token 在有效期内被明道单方面作废）时，
+    api_client 清缓存重试一次——server 模式会从服务器拿到 daemon 自愈后的新 token。
+    """
+    _cache["token"] = ""
+    _cache["expires_at"] = 0
+
+
 MDYMCP_USER_HOME = Path.home() / ".mdymcp"
 # 兼容 0.1.x 的老路径；新路径优先，读到老路径时不强制迁移，等 install 再搬家
 MDYMCP_USER_HOME_LEGACY = Path.home() / ".mdmcp"
