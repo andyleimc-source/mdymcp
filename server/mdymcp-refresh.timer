@@ -1,11 +1,11 @@
 [Unit]
-Description=每小时拉起 mdymcp v1 token 刷新检查
+Description=每10分钟拉起 mdymcp v1 token 刷新检查（测活+按需刷新）
 
 [Timer]
-# 开机 3 分钟后跑一次，之后每小时一次。daemon 自己判断「快过期才真刷」，
-# 所以每小时拉起是廉价的：绝大多数运行都是 noop，漏跑几次也不断链（token 寿命 24h）。
+# 开机 3 分钟后跑一次，之后每 10 分钟一次。daemon 每次都测活：
+# token 被外部作废（中年死亡）→ 10 分钟内强刷自愈；未死且未到刷新窗口 → 一次廉价探测即结束。
 OnBootSec=3min
-OnUnitActiveSec=1h
+OnUnitActiveSec=10min
 Persistent=true
 
 [Install]
